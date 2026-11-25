@@ -1835,6 +1835,13 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "invalid task-level intercept rules: "+err.Error())
 		return
 	}
+	// When the request does not state a target_gate, inherit the global default
+	// (Settings → "Default target approval gate"). An explicit flag in the
+	// request always wins.
+	if req.TargetGate == nil {
+		def := s.m.pg.GetBool(settingTargetGateDefault, false)
+		req.TargetGate = &def
+	}
 	t, err := s.m.CreateTaskWithOptions(req.Description, req.Goal, db.TaskCreateOptions{
 		Name: strings.TrimSpace(req.Name), CategoryID: req.CategoryID,
 		SourceTaskIDs: sourceIDs, CompanyIDs: req.CompanyIDs, LLMProfileIDs: req.LLMProfileIDs,
@@ -3920,8 +3927,10 @@ func (s *Server) settingsPayload() map[string]any {
 	}
 	limits := notifyLimits(s.m.pg)
 	return map[string]any{
-		"traffic_capture":          s.m.TrafficEnabled(),
-		"agent_traffic_binding":    s.m.pg.GetBool(settingAgentTrafficBinding, false),
+		"traffic_capture":       s.m.TrafficEnabled(),
+		"agent_traffic_binding": s.m.pg.GetBool(settingAgentTrafficBinding, false),
+		// Default target approval gate for new tasks (per-task opt-in gate; off by default).
+		"target_gate_default":      s.m.pg.GetBool(settingTargetGateDefault, false),
 		"triage_profile_id":        s.triageProfileID(),
 		"triage_min_confidence":    s.triageMinConfidence(),
 		"llm_record":               s.m.LLMRecordEnabled(),
@@ -4002,7 +4011,11 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TrafficCapture      *bool `json:"traffic_capture"`
 		AgentTrafficBinding *bool `json:"agent_traffic_binding"`
-		LLMRecord           *bool `json:"llm_record"` // LLM recording switch (default off); takes effect immediately, no agent rebuild needed
+		// TargetGateDefault: default value of a new task's target approval gate
+		// (confines scanning to in-scope destinations). Applies to tasks created
+		// afterwards; never changes an existing task's own flag.
+		TargetGateDefault *bool `json:"target_gate_default"`
+		LLMRecord         *bool `json:"llm_record"` // LLM recording switch (default off); takes effect immediately, no agent rebuild needed
 		// Web search. WebSearchEnabled/Backend toggle the tool + backend; BraveKey/TavilyKey/KeenableKey
 		// are optional — omit (null) to leave a stored key untouched, send "" to clear. The Keenable
 		// key is optional even when its backend is selected: empty uses the keyless public endpoint.
@@ -4231,6 +4244,12 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.AgentTrafficBinding != nil {
 		if err := s.m.pg.SetBool(settingAgentTrafficBinding, *req.AgentTrafficBinding); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	if req.TargetGateDefault != nil {
+		if err := s.m.pg.SetBool(settingTargetGateDefault, *req.TargetGateDefault); err != nil {
 			writeErr(w, 500, err.Error())
 			return
 		}

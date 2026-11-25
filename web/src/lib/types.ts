@@ -1023,6 +1023,7 @@ export interface TrafficHost {
 export interface Settings {
   traffic_capture: boolean;
   agent_traffic_binding: boolean; // agents auto-bind traffic evidence, off by default; does not affect manual binding
+  target_gate_default: boolean; // default target approval gate for new tasks (confines scanning to in-scope destinations); off by default
   llm_record: boolean; // LLM recording switch (off by default); when off no LLM calls are recorded
   // Web search. brave_key_set / tavily_key_set / keenable_key_set reflect whether a key is stored
   // (the values are never returned). On PUT, send the corresponding field to set/clear.

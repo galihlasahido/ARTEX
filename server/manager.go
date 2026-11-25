@@ -306,12 +306,17 @@ type Manager struct {
 const (
 	settingTrafficCapture      = "traffic_capture"
 	settingAgentTrafficBinding = "agent_traffic_binding"
-	settingWebSearchOn         = "web_search_enabled"
-	settingWebSearchBackend    = "web_search_backend"
-	settingBraveKey            = "brave_search_api_key"
-	settingTavilyKey           = "tavily_search_api_key"
-	settingKeenableKey         = "keenable_search_api_key"
-	settingWebSearchProxy      = "web_search_proxy"
+	// settingTargetGateDefault is the default value of a new task's target
+	// approval gate. Off by default; when on, a task created without an
+	// explicit target_gate flag starts with the gate enabled. It never changes
+	// a task that already exists — those keep their own per-task flag.
+	settingTargetGateDefault = "target_gate_default"
+	settingWebSearchOn       = "web_search_enabled"
+	settingWebSearchBackend  = "web_search_backend"
+	settingBraveKey          = "brave_search_api_key"
+	settingTavilyKey         = "tavily_search_api_key"
+	settingKeenableKey       = "keenable_search_api_key"
+	settingWebSearchProxy    = "web_search_proxy"
 	// settingGlobalProxy is the global egress proxy for all target traffic
 	// (http/https/socks5). Empty = direct. Distinct from web_search_proxy (which
 	// only routes the search backend) and the per-profile LLM proxy.

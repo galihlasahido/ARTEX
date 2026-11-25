@@ -2728,5 +2728,12 @@
   "Search company…": "Şirket ara…",
   "Failed to load companies": "Şirketler yüklenemedi",
   "No company found": "Şirket bulunamadı",
-  "Manage companies": "Şirketleri yönet"
+  "Manage companies": "Şirketleri yönet",
+  "Default target approval gate": "Gerbang persetujuan target bawaan",
+  "Off by default. When enabled, every new task starts with its target gate on, so the agent's requests are confined to assets inside the task's scope: a request to an out-of-scope host is blocked or sent to the approval queue. <b>This stops a scan from spreading to other domains discovered during recon.</b>": "Mati secara bawaan. Saat diaktifkan, setiap task baru dimulai dengan target gate menyala, sehingga request agen dibatasi pada aset di dalam scope task: request ke host di luar scope diblokir atau dikirim ke antrean persetujuan. <b>Ini mencegah scan melebar ke domain lain yang ditemukan saat recon.</b>",
+  "In-scope targets still run automatically, with no approval prompt. This is a default for tasks created afterwards; it never changes a task that already exists, and a task can still be overridden individually via the API.": "Target di dalam scope tetap berjalan otomatis, tanpa permintaan persetujuan. Ini adalah bawaan untuk task yang dibuat setelahnya; tidak mengubah task yang sudah ada, dan tiap task masih bisa ditimpa satu per satu lewat API.",
+  "On · new tasks confine scanning to their scope": "Nyala · task baru membatasi scan pada scope-nya",
+  "Off · new tasks can reach any discovered host": "Mati · task baru bisa menjangkau host mana pun yang ditemukan",
+  "New tasks will confine scanning to in-scope targets": "Task baru akan membatasi scan pada target di dalam scope",
+  "New tasks will not gate out-of-scope targets": "Task baru tidak akan menggerbangi target di luar scope"
 }

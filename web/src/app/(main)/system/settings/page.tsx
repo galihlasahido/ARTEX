@@ -32,6 +32,7 @@ function rich(s: string): React.ReactNode[] {
 export default function SystemSettingsPage() {
   const [trafficCapture, setTrafficCapture] = React.useState(false);
   const [agentTrafficBinding, setAgentTrafficBinding] = React.useState(false);
+  const [targetGateDefault, setTargetGateDefault] = React.useState(false);
   const [webSearch, setWebSearch] = React.useState(false);
   const [backend, setBackend] = React.useState("ddgs");
   const [braveKeySet, setBraveKeySet] = React.useState(false);
@@ -64,6 +65,7 @@ export default function SystemSettingsPage() {
   const apply = React.useCallback((s: Settings) => {
     setTrafficCapture(!!s.traffic_capture);
     setAgentTrafficBinding(!!s.agent_traffic_binding);
+    setTargetGateDefault(!!s.target_gate_default);
     setWebSearch(!!s.web_search_enabled);
     setBackend(s.web_search_backend || "ddgs");
     setBraveKeySet(!!s.brave_key_set);
@@ -152,6 +154,22 @@ export default function SystemSettingsPage() {
       })
       .catch((e) => {
         setAgentTrafficBinding(!v);
+        toast.error(t("Save failed: {error}", { error: (e as Error).message }));
+      })
+      .finally(() => setSaving(false));
+  };
+
+  const toggleTargetGateDefault = (v: boolean) => {
+    setTargetGateDefault(v);
+    setSaving(true);
+    api
+      .setSettings({ target_gate_default: v })
+      .then((s) => {
+        apply(s);
+        toast.success(v ? t("New tasks will confine scanning to in-scope targets") : t("New tasks will not gate out-of-scope targets"));
+      })
+      .catch((e) => {
+        setTargetGateDefault(!v);
         toast.error(t("Save failed: {error}", { error: (e as Error).message }));
       })
       .finally(() => setSaving(false));
@@ -370,6 +388,38 @@ export default function SystemSettingsPage() {
               checked={agentTrafficBinding}
               disabled={!loaded || saving}
               onCheckedChange={toggleAgentTrafficBinding}
+            />
+          </CardContent>
+        </Card>
+
+        <Card className="mb-4 break-inside-avoid md:mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <ShieldAlertIcon className="size-4" />
+              {t("Default target approval gate")}
+            </CardTitle>
+            <CardDescription id="target-gate-default-description">
+              {rich(
+                t(
+                  "Off by default. When enabled, every new task starts with its target gate on, so the agent's requests are confined to assets inside the task's scope: a request to an out-of-scope host is blocked or sent to the approval queue. <b>This stops a scan from spreading to other domains discovered during recon.</b>",
+                ),
+              )}
+              <br />
+              {t(
+                "In-scope targets still run automatically, with no approval prompt. This is a default for tasks created afterwards; it never changes a task that already exists, and a task can still be overridden individually via the API.",
+              )}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex items-center justify-between gap-4">
+            <Label htmlFor="target-gate-default" className="text-sm font-normal text-muted-foreground">
+              {targetGateDefault ? t("On · new tasks confine scanning to their scope") : t("Off · new tasks can reach any discovered host")}
+            </Label>
+            <Switch
+              id="target-gate-default"
+              aria-describedby="target-gate-default-description"
+              checked={targetGateDefault}
+              disabled={!loaded || saving}
+              onCheckedChange={toggleTargetGateDefault}
             />
           </CardContent>
         </Card>

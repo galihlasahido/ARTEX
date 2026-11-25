@@ -2728,5 +2728,12 @@
   "Search company…": "搜索企业…",
   "Failed to load companies": "加载企业失败",
   "No company found": "未找到企业",
-  "Manage companies": "管理企业"
+  "Manage companies": "管理企业",
+  "Default target approval gate": "默认目标审批门",
+  "Off by default. When enabled, every new task starts with its target gate on, so the agent's requests are confined to assets inside the task's scope: a request to an out-of-scope host is blocked or sent to the approval queue. <b>This stops a scan from spreading to other domains discovered during recon.</b>": "默认关闭。启用后，每个新任务启动时目标门即开启，代理的请求被限制在任务范围内的资产：对范围外主机的请求会被拦截或送入审批队列。<b>这可防止扫描蔓延到侦察阶段发现的其他域名。</b>",
+  "In-scope targets still run automatically, with no approval prompt. This is a default for tasks created afterwards; it never changes a task that already exists, and a task can still be overridden individually via the API.": "范围内的目标仍自动执行，不会弹出审批。这是对此后创建的任务的默认设置；不会更改已存在的任务，且每个任务仍可通过 API 单独覆盖。",
+  "On · new tasks confine scanning to their scope": "开 · 新任务将扫描限制在其范围内",
+  "Off · new tasks can reach any discovered host": "关 · 新任务可访问任何发现的主机",
+  "New tasks will confine scanning to in-scope targets": "新任务将把扫描限制在范围内的目标",
+  "New tasks will not gate out-of-scope targets": "新任务不会对范围外目标设门"
 }
