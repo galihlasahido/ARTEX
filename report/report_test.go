@@ -401,3 +401,79 @@ func TestFindingFilenameUnicodeAndIDSuffix(t *testing.T) {
 		t.Fatalf("expected preserved distinct ID suffixes: f1=%q f2=%q", f1, f2)
 	}
 }
+
+// Status (triage/remediation state) and the OWASP Top 10:2021 mapping appear
+// in the Markdown report when a finding's quality row/vulnclass supports them,
+// and the mapping says so plainly when it does not match any known category —
+// never a guessed category.
+func TestMarkdownStatusAndOWASPReference(t *testing.T) {
+	// reportNode hardcodes vulnclass; build nodes with real vulnclass values so
+	// the OWASP mapping has something to match (and deliberately miss) on.
+	node := func(id int64, vulnclass, severity, name string) *db.Node {
+		payload := fmt.Sprintf(`{"vulnclass":%q,"name":%q,"severity":%q,"summary":"s","evidence":{"poc":"p"}}`, vulnclass, name, severity)
+		return &db.Node{ID: id, Kind: db.KindFinding, Payload: []byte(payload)}
+	}
+	findings := []*db.Node{
+		node(1, "xss", "high", "Reflected XSS"),
+		node(2, "obscure-legacy-quirk", "low", "Weird Legacy Protocol Quirk"),
+	}
+	md := Markdown(Input{
+		Title:    "t",
+		Findings: findings,
+		Quality: map[int64]db.FindingQuality{
+			1: {FindingMeta: db.FindingMeta{ID: 1, Status: db.FindingFixed}, VerificationStatus: db.VerificationVerified},
+		},
+	})
+	if !strings.Contains(md, "**Status**: Fixed") {
+		t.Errorf("missing Status bullet for a fixed finding:\n%s", md)
+	}
+	if !strings.Contains(md, "**OWASP Top 10:2021**: A03:2021 – Injection (https://owasp.org/Top10/A03_2021-Injection/)") {
+		t.Errorf("missing OWASP mapping for an XSS finding:\n%s", md)
+	}
+	if !strings.Contains(md, "**OWASP Top 10:2021**: not mapped to a specific category") {
+		t.Errorf("missing honest fallback for an unmapped vulnclass:\n%s", md)
+	}
+	// A finding never triaged must not print a Status bullet at all.
+	if strings.Contains(md, "**Status**: ") && strings.Count(md, "**Status**:") != 1 {
+		t.Errorf("unexpected Status bullet count; want exactly one (only the fixed finding)\n%s", md)
+	}
+}
+
+func TestStatusLabel(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"", ""},
+		{db.FindingPending, "Pending triage"},
+		{db.FindingFixed, "Fixed"},
+		{db.FindingFalsePositive, "False positive"},
+		{db.FindingRiskAccepted, "Risk accepted"},
+		{"some_future_status", "some_future_status"}, // unknown value passes through rather than vanishing
+	}
+	for _, c := range cases {
+		if got := statusLabel(c.in); got != c.want {
+			t.Errorf("statusLabel(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestOWASPReference(t *testing.T) {
+	cases := []struct {
+		vulnClass    string
+		wantCategory string
+		wantMatched  bool
+	}{
+		{"sql injection", "A03:2021 – Injection", true},
+		{"IDOR", "A01:2021 – Broken Access Control", true},
+		{"CVE-2021-44228", "A06:2021 – Vulnerable and Outdated Components", true},
+		{"", "", false},
+		{"something entirely novel", "", false},
+	}
+	for _, c := range cases {
+		category, url, matched := owaspReference(c.vulnClass)
+		if matched != c.wantMatched || category != c.wantCategory {
+			t.Errorf("owaspReference(%q) = (%q, %q, %v), want category %q matched %v", c.vulnClass, category, url, matched, c.wantCategory, c.wantMatched)
+		}
+		if matched && !strings.HasPrefix(url, "https://owasp.org/") {
+			t.Errorf("owaspReference(%q): url %q is not an owasp.org reference", c.vulnClass, url)
+		}
+	}
+}

@@ -17,6 +17,11 @@ type Input struct {
 	Title       string
 	Goal        string
 	GeneratedAt time.Time
+	// Lang selects the DOCX deliverable's presentational language ("en" | "id";
+	// "" and any unknown value fall back to English). It localizes labels and
+	// boilerplate only, never the finding data. Markdown() ignores it and stays
+	// English — the developer/API format.
+	Lang        string
 	AssetCounts map[string]int
 	Findings    []*db.Node
 	Coverage    *db.CoverageLedger // nil when the task's coverage feature is off
@@ -103,6 +108,11 @@ func Markdown(in Input) string {
 			fmt.Fprintf(&b, "### %d. [%s] %s\n\n", i+1, strings.ToUpper(nz(f.Severity, "info")), nz(f.Name, nz(f.VulnClass, "Uncategorized")))
 			fmt.Fprintf(&b, "%s\n\n", nz(f.Summary, ""))
 			b.WriteString(qualityBullets(f.Q, true)) // honest proof strength, including its gaps
+			if category, url, ok := owaspReference(f.VulnClass); ok {
+				fmt.Fprintf(&b, "- **OWASP Top 10:2021**: %s (%s)\n\n", category, url)
+			} else {
+				b.WriteString("- **OWASP Top 10:2021**: not mapped to a specific category\n\n")
+			}
 			if f.PoC != "" {
 				fmt.Fprintf(&b, "**PoC / Evidence:**\n\n```\n%s\n```\n\n", f.PoC)
 			}

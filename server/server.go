@@ -279,6 +279,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		domainReg := buildDomainReg(m.Assets())
 		wireTools(m.pg, domainReg)   // built-in tools table: filter per agent + override description/schema + inject defaults
 		seedPrompts(m.pg)            // seed built-in agent default prompt bodies into agent_prompts (only when empty)
+		seedTaskTemplates(m.pg)      // seed the built-in task-template catalog into task_templates (first-insert only, by name)
 		warnBrokenSkills(s.skillDir) // surface skills whose frontmatter silently failed to parse
 		s.seedOrchestrationTools()   // seed P2 cross-task orchestration tools into the tools table (bindable per agent)
 		if err := s.seedFindingRetester(); err != nil {
@@ -939,6 +940,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/notify/deliveries/{id}/retry", s.notifyRetryDelivery)
 	mux.HandleFunc("POST /api/settings/web-search/test", s.testWebSearch)
 	mux.HandleFunc("GET /api/report", s.getReport)
+	mux.HandleFunc("GET /api/report/docx", s.getReportDocx) // same report as a professional Word (.docx) deliverable (cover page, exec summary, findings, coverage appendix)
 	mux.HandleFunc("GET /api/chat/mentions", s.searchChatMentions)
 	mux.HandleFunc("POST /api/chat", s.chat)
 	mux.HandleFunc("POST /api/chat/upload", s.chatUpload) // upload method 1: files land in uploads/ under the conversation/task work dir
@@ -4576,12 +4578,13 @@ func (s *Server) fallbackChat(t *Task, msg string) string {
 	}
 }
 
-func (s *Server) getReport(w http.ResponseWriter, r *http.Request) {
-	t := s.m.ResolveTask(r.URL.Query().Get("task"))
-	if t == nil {
-		writeErr(w, 404, "no active task")
-		return
-	}
+// buildReportInput assembles the one report.Input both the Markdown and docx
+// renderers consume, so a change to what counts as "in the report" (which
+// finding fields, which asset types, whether coverage is attached) can never
+// land in one deliverable and not the other. On a lookup failure it writes
+// the error response itself and returns ok=false; callers must return
+// immediately in that case without writing anything else.
+func (s *Server) buildReportInput(w http.ResponseWriter, t *Task) (report.Input, bool) {
 	findings, _ := t.Store.ListByKind(db.KindFinding, 1000) // pure vulnerabilities (facts are a separate KindFact and never enter the report)
 	counts := map[string]int{}
 	for _, ty := range []string{"root_domain", "ip", "subdomain", "app", "service", "endpoint"} {
@@ -4612,17 +4615,120 @@ func (s *Server) getReport(w http.ResponseWriter, r *http.Request) {
 		if quality, err = s.m.pg.FindingQualityByNodeID(taskID); err != nil {
 			log.Printf("[report] task=%s finding quality: %v", t.ID, err)
 			writeErr(w, 500, "report unavailable: the finding quality lookup failed, retry")
-			return
+			return report.Input{}, false
 		}
 	}
-	md := report.Markdown(report.Input{
-		Title: t.Description, Goal: t.Goal, GeneratedAt: time.Now(),
+	// Prefer the task's short name for the report title (cover, header,
+	// confidentiality line); fall back to the longer description for an unnamed
+	// task. The description, when distinct, still reaches the reader as the
+	// cover Objective via Goal below.
+	title := strings.TrimSpace(t.Name)
+	if title == "" {
+		title = t.Description
+	}
+	return report.Input{
+		Title: title, Goal: t.Goal, GeneratedAt: time.Now(),
 		AssetCounts: counts, Findings: findings, Coverage: ledger,
 		Quality: quality,
-	})
+	}, true
+}
+
+func (s *Server) getReport(w http.ResponseWriter, r *http.Request) {
+	t := s.m.ResolveTask(r.URL.Query().Get("task"))
+	if t == nil {
+		writeErr(w, 404, "no active task")
+		return
+	}
+	in, ok := s.buildReportInput(w, t)
+	if !ok {
+		return
+	}
+	md := report.Markdown(in)
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 	w.WriteHeader(200)
 	_, _ = w.Write([]byte(md))
+}
+
+// getReportDocx serves the same report as a professional Word (.docx)
+// deliverable (cover page, executive summary, findings, coverage appendix) —
+// see report.Docx. Built from the same report.Input as getReport, so the two
+// formats can never disagree about which findings are in the report or how
+// strong their proof is.
+func (s *Server) getReportDocx(w http.ResponseWriter, r *http.Request) {
+	t := s.m.ResolveTask(r.URL.Query().Get("task"))
+	if t == nil {
+		writeErr(w, 404, "no active task")
+		return
+	}
+	in, ok := s.buildReportInput(w, t)
+	if !ok {
+		return
+	}
+	in.Lang = reportLang(r.URL.Query().Get("lang"))
+	doc, err := report.Docx(in)
+	if err != nil {
+		log.Printf("[report] task=%s docx render: %v", t.ID, err)
+		writeErr(w, 500, "report unavailable: the docx render failed, retry")
+		return
+	}
+	filename := reportDocxFilename(t.Name, t.ID, in.GeneratedAt, in.Lang)
+	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	w.WriteHeader(200)
+	_, _ = w.Write(doc)
+}
+
+// reportDocxFilename builds a short, predictable attachment filename:
+// "ARTEX-<task-name>-task<id>-<YYYYMMDD>.docx". The task id and date make
+// every download unique and traceable even when the name is empty (an
+// unnamed task) or several tasks share a name; the date matches the report's
+// own "Generated:" line (generatedAt), not the download instant. name is
+// reduced to letters/digits/dash (slugify) and capped well short of common
+// filesystem limits, so neither a long task name nor a stray quote or path
+// separator in it can produce an unwieldy or unsafe filename.
+func reportDocxFilename(name, taskID string, generatedAt time.Time, lang string) string {
+	slug := slugifyFilenameSegment(name)
+	if slug == "" {
+		slug = "pentest-report"
+	}
+	if len(slug) > 40 {
+		slug = strings.TrimRight(slug[:40], "-")
+	}
+	return fmt.Sprintf("ARTEX-%s-task%s-%s-%s.docx", slug, taskID, generatedAt.Format("20060102"), lang)
+}
+
+// reportLang normalizes the ?lang= query value to a supported report language
+// code, defaulting to English for an empty or unrecognized value so a bad
+// parameter never fails the download.
+func reportLang(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "id", "in", "ind", "indonesia", "indonesian":
+		return "id"
+	default:
+		return "en"
+	}
+}
+
+// slugifyFilenameSegment keeps letters/digits, turns every other rune into a
+// single "-", and collapses repeats so "Red Team: Subdomain Sweep & Pivot"
+// becomes "Red-Team-Subdomain-Sweep-Pivot" — plain ASCII, no run of dashes,
+// safe inside a Content-Disposition filename and on every common filesystem.
+func slugifyFilenameSegment(s string) string {
+	var b strings.Builder
+	prevDash := true // true at the start so a leading separator is dropped, not turned into a dash
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			prevDash = false
+		default:
+			if !prevDash {
+				b.WriteByte('-')
+				prevDash = true
+			}
+		}
+	}
+	return strings.TrimRight(b.String(), "-")
 }
 
 func (s *Server) getAudit(w http.ResponseWriter, r *http.Request) {

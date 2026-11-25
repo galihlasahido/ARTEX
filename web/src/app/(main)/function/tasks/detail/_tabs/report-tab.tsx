@@ -2,7 +2,7 @@
 
 import * as React from "react";
 
-import { CheckIcon, CopyIcon, FileTextIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, DownloadIcon, FileTextIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import { Markdown } from "@/components/markdown";
@@ -16,6 +16,7 @@ export function ReportTab({ taskId }: { taskId: string }) {
   const [report, setReport] = React.useState<string>("");
   const [loading, setLoading] = React.useState(true);
   const [copied, setCopied] = React.useState(false);
+  const [downloading, setDownloading] = React.useState(false);
 
   React.useEffect(() => {
     let active = true;
@@ -45,6 +46,23 @@ export function ReportTab({ taskId }: { taskId: string }) {
       setTimeout(() => setCopied(false), 1500);
     } else {
       toast.error(t("Copy failed; please select the text and copy it manually"));
+    }
+  }
+
+  async function downloadDocx(lang: "en" | "id") {
+    setDownloading(true);
+    try {
+      const { blob, filename } = await api.reportDocx(taskId, lang);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast.error(t("DOCX export failed"));
+    } finally {
+      setDownloading(false);
     }
   }
 
@@ -83,6 +101,12 @@ export function ReportTab({ taskId }: { taskId: string }) {
               {copied ? <CheckIcon /> : <CopyIcon />} {t("Copy")}
             </Button>
           )}
+          <Button size="sm" variant="outline" onClick={() => downloadDocx("en")} disabled={downloading}>
+            <DownloadIcon /> {downloading ? t("Generating…") : t("DOCX (EN)")}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => downloadDocx("id")} disabled={downloading}>
+            <DownloadIcon /> {downloading ? t("Generating…") : t("DOCX (ID)")}
+          </Button>
         </div>
       </CardHeader>
       <CardContent>{content}</CardContent>

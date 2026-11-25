@@ -26,6 +26,7 @@ type Quality struct {
 	Counterevidence       string
 	TrafficCount          int
 	RecordID              int64  // standalone findings-table id; 0 = no row
+	Status                string // triage/remediation state (db.FindingPending/.../FindingFixed); "" = not triaged
 	Report                string // reporter-written detailed report body (Markdown)
 	EvidenceVersion       int64  // version of the evidence bound to the row
 	ReportEvidenceVersion int64  // evidence version the stored report was written against
@@ -74,6 +75,7 @@ func qualityFromRows(nodeID int64, rows map[int64]db.FindingQuality) Quality {
 		Counterevidence:       q.Counterevidence,
 		TrafficCount:          q.TrafficCount,
 		RecordID:              q.ID,
+		Status:                q.Status,
 		Report:                q.Report,
 		EvidenceVersion:       q.EvidenceVersion,
 		ReportEvidenceVersion: q.ReportEvidenceVersion,
@@ -90,6 +92,7 @@ func qualityFromDBFinding(f *db.DBFinding) Quality {
 		Counterevidence:       f.Counterevidence,
 		TrafficCount:          f.TrafficCount,
 		RecordID:              f.ID,
+		Status:                f.Status,
 		Report:                f.Report,
 		EvidenceVersion:       f.EvidenceVersion,
 		ReportEvidenceVersion: f.ReportEvidenceVersion,
@@ -132,6 +135,9 @@ func qualityBullets(q Quality, alwaysProof bool) string {
 	}
 	if note := oneLine(q.VerificationNote); note != "" {
 		fmt.Fprintf(&b, "- **Verification note**: %s\n", note)
+	}
+	if label := statusLabel(q.Status); label != "" {
+		fmt.Fprintf(&b, "- **Status**: %s\n", label)
 	}
 	b.WriteString("\n")
 	return b.String()
@@ -223,27 +229,72 @@ func unbalancedFence(s string) bool {
 	return fences%2 == 1
 }
 
-// verificationLabel renders a verification state for a human-readable document.
-// The five labels match the ones the web UI already shows for the same values; an
-// unrecognised value is printed verbatim instead of hidden, so a new state can
-// never silently disappear from a report.
+// verificationLabel renders a verification state for the English Markdown
+// report and the findings export. It delegates to the English string table
+// (langEN) so the Markdown and DOCX deliverables share one source of truth for
+// the labels; an unrecognised value is printed verbatim instead of hidden, so
+// a new state can never silently disappear from a report.
 func verificationLabel(s string) string {
-	switch s {
-	case "", db.VerificationUnverified:
-		return "Unverified"
-	case db.VerificationVerified:
-		return "Verified"
-	case db.VerificationBlocked:
-		return "Blocked"
-	case db.VerificationNotAssessed:
-		return "Not assessed"
-	case db.VerificationFalsePositive:
-		return "False positive"
-	}
-	return s
+	return langEN.verificationDisplay(s)
 }
 
 // oneLine collapses a note onto a single line so it can sit inside a bullet.
 func oneLine(s string) string {
 	return strings.Join(strings.Fields(s), " ")
+}
+
+// statusLabel renders a finding's triage/remediation state for the English
+// Markdown report. It delegates to langEN (one source of truth, shared with
+// the DOCX). Empty means never triaged — the caller skips the bullet entirely
+// rather than print a blank or invented default (ARTEX does not track a
+// "SUDAH DIPERBAIKI"-style status until an operator or the retester sets one).
+func statusLabel(s string) string {
+	return langEN.statusDisplay(s)
+}
+
+// owaspKeyword maps a lowercase substring match against a finding's vulnclass
+// to its OWASP Top 10:2021 category and the matching public reference URL
+// (owasp.org's own stable URL scheme — not any third party's proprietary
+// content). Order matters: the first matching keyword wins, so a more specific
+// term is listed before a broader one it would otherwise be caught by.
+var owaspKeyword = []struct{ keyword, category, url string }{
+	{"sql injection", "A03:2021 – Injection", "https://owasp.org/Top10/A03_2021-Injection/"},
+	{"sqli", "A03:2021 – Injection", "https://owasp.org/Top10/A03_2021-Injection/"},
+	{"xss", "A03:2021 – Injection", "https://owasp.org/Top10/A03_2021-Injection/"},
+	{"injection", "A03:2021 – Injection", "https://owasp.org/Top10/A03_2021-Injection/"},
+	{"idor", "A01:2021 – Broken Access Control", "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"},
+	{"access control", "A01:2021 – Broken Access Control", "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"},
+	{"bola", "A01:2021 – Broken Access Control", "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"},
+	{"bfla", "A01:2021 – Broken Access Control", "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"},
+	{"ssrf", "A10:2021 – Server-Side Request Forgery", "https://owasp.org/Top10/A10_2021-Server-Side_Request_Forgery_%28SSRF%29/"},
+	{"deserial", "A08:2021 – Software and Data Integrity Failures", "https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/"},
+	{"supply chain", "A08:2021 – Software and Data Integrity Failures", "https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/"},
+	{"outdated", "A06:2021 – Vulnerable and Outdated Components", "https://owasp.org/Top10/A06_2021-Vulnerable_and_Outdated_Components/"},
+	{"vulnerable component", "A06:2021 – Vulnerable and Outdated Components", "https://owasp.org/Top10/A06_2021-Vulnerable_and_Outdated_Components/"},
+	{"cve-", "A06:2021 – Vulnerable and Outdated Components", "https://owasp.org/Top10/A06_2021-Vulnerable_and_Outdated_Components/"},
+	{"auth", "A07:2021 – Identification and Authentication Failures", "https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/"},
+	{"username enumeration", "A07:2021 – Identification and Authentication Failures", "https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/"},
+	{"crypto", "A02:2021 – Cryptographic Failures", "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"},
+	{"unencrypted", "A02:2021 – Cryptographic Failures", "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"},
+	{"tls", "A02:2021 – Cryptographic Failures", "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"},
+	{"disclosure", "A05:2021 – Security Misconfiguration", "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"},
+	{"exposure", "A05:2021 – Security Misconfiguration", "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"},
+	{"misconfig", "A05:2021 – Security Misconfiguration", "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"},
+	{"header", "A05:2021 – Security Misconfiguration", "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"},
+	{"logging", "A09:2021 – Security Logging and Monitoring Failures", "https://owasp.org/Top10/A09_2021-Security_Logging_and_Monitoring_Failures/"},
+	{"design", "A04:2021 – Insecure Design", "https://owasp.org/Top10/A04_2021-Insecure_Design/"},
+}
+
+// owaspReference best-effort maps a finding's vulnclass to an OWASP Top
+// 10:2021 category by keyword. An unmatched or empty vulnclass says so plainly
+// instead of guessing a category the evidence does not support — the same
+// honest-gap rule as every other Quality field.
+func owaspReference(vulnClass string) (category, url string, matched bool) {
+	lc := strings.ToLower(vulnClass)
+	for _, k := range owaspKeyword {
+		if strings.Contains(lc, k.keyword) {
+			return k.category, k.url, true
+		}
+	}
+	return "", "", false
 }

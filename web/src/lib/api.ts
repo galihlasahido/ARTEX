@@ -1070,6 +1070,21 @@ export const api = {
     if (!r.ok) throw new Error(t("Report failed: {error}", { error: r.status }));
     return r.text();
   },
+  // Downloads the same report as a professional Word (.docx) document (cover
+  // page, executive summary, findings, coverage appendix). Returns the blob
+  // and the filename the server chose (from Content-Disposition) so the
+  // caller only has to trigger the save, not guess a name.
+  reportDocx: async (task?: string, lang?: "en" | "id"): Promise<{ blob: Blob; filename: string }> => {
+    const token = getToken();
+    const langQuery = lang ? `${tq(task) ? "&" : "?"}lang=${lang}` : "";
+    const r = await fetch(`/api/report/docx${tq(task)}${langQuery}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!r.ok) throw new Error(t("Report failed: {error}", { error: r.status }));
+    const disposition = r.headers.get("Content-Disposition") ?? "";
+    const match = /filename="([^"]+)"/.exec(disposition);
+    return { blob: await r.blob(), filename: match?.[1] ?? "pentest-report.docx" };
+  },
   chatMentions: (kind: string, query: string, signal?: AbortSignal, cursor = "") =>
     http<{ items: ChatMention[]; next_cursor?: string }>(
       `/chat/mentions?${new URLSearchParams({ kind, q: query, cursor })}`,
