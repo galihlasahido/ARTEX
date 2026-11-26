@@ -137,6 +137,13 @@ func (g *Guard) gateScope(ctx context.Context) (intercept.TargetScope, bool) {
 	return scope, ok && g.gate != nil && scope.Enabled != nil && scope.Enabled()
 }
 
+// autoApprove reports whether the session on ctx opted into automatic scan, in
+// which case the guard turns an ask into an allow. Independent of the target gate.
+func (g *Guard) autoApprove(ctx context.Context) bool {
+	scope, ok := intercept.TargetScopeFromContext(ctx)
+	return ok && scope.AutoApprove != nil && scope.AutoApprove()
+}
+
 // applyIntercept evaluates user-configured intercept rules against the tool call,
 // then the target gate. Both rules and the fallback judge receive the complete
 // tool input.
@@ -184,6 +191,13 @@ func (g *Guard) applyIntercept(ctx context.Context, ev hook.Event, cmd string) h
 		// Note: a deny hit does not block for approval; it directly logs a denied entry (visible on the history / task interception pages).
 		g.interceptor.Log(ctx, intercept.ConvIDFromContext(ctx), dec, ev.ToolName, ev.Input, "denied")
 		return g.block(ev.ToolName, systemBlockMessage(dec.Message), cmd)
+	}
+	// Automatic scan: a session that opted in turns an ask into an allow, so the
+	// scan runs without stopping for the operator. It never changes the deny above,
+	// and the target gate below still asks for out-of-scope destinations.
+	if dec.Action == "ask" && g.autoApprove(ctx) {
+		dec.Action = "allow"
+		dec.Message = "automatic scan: auto-approved (would otherwise ask — " + dec.Message + ")"
 	}
 	var unpinned []intercept.TargetRequest
 	if gated {

@@ -21,6 +21,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/Autumn-27/artex/config"
+	"github.com/Autumn-27/artex/db"
 )
 
 const (
@@ -171,11 +172,14 @@ func samePath(a, b string) bool {
 	return a == b
 }
 
-// sessionClaims carries the password version the token was signed under.
-// Two changes in the same second get different versions, so a cutoff based on
-// the issued-at second cannot leave the older token valid.
+// sessionClaims carries the password version the token was signed under and,
+// for display, the role. Two changes in the same second get different versions,
+// so a cutoff based on the issued-at second cannot leave the older token valid.
+// The role claim is advisory: the server derives authorization from its own
+// record (see session), never from this field, so tampering it cannot escalate.
 type sessionClaims struct {
-	Pwd int64 `json:"pwd"`
+	Pwd  int64  `json:"pwd"`
+	Role string `json:"role,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -184,12 +188,19 @@ func signJWT(key []byte) (string, error) {
 	return signJWTVersion(key, 0)
 }
 
-// signJWTVersion issues a 7-day HS256 token bound to a password version.
+// signJWTVersion issues a 7-day HS256 token for the bootstrap admin ARTEX bound
+// to a password version. Kept for tests and the ARTEX login path.
 func signJWTVersion(key []byte, version int64) (string, error) {
+	return signJWTUser(key, bootstrapAdmin, "", version)
+}
+
+// signJWTUser issues a 7-day HS256 token for username at role and pwd version.
+func signJWTUser(key []byte, username, role string, version int64) (string, error) {
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, sessionClaims{
-		Pwd: version,
+		Pwd:  version,
+		Role: role,
 		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   "ARTEX",
+			Subject:   username,
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(jwtTTL)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
@@ -216,14 +227,63 @@ func verifyJWT(tokenStr string, key []byte, version int64) bool {
 	return true
 }
 
-// sessionOK reports whether token is still a session for the password version
-// this process has loaded. A failed version read rejects every token until
-// login reads the counter again.
+// sessionOK reports whether token is a valid session for some active account.
 func (s *Server) sessionOK(token string) bool {
-	if s.pwdState.Load() == pwdUnreadable {
-		return false
+	_, ok := s.session(token)
+	return ok
+}
+
+// parseClaims verifies the HS256 signature and expiry and returns the claims.
+func (s *Server) parseClaims(token string) (*sessionClaims, bool) {
+	if token == "" {
+		return nil, false
 	}
-	return verifyJWT(token, s.jwtKey, s.pwdVersion.Load())
+	claims := &sessionClaims{}
+	t, err := jwt.ParseWithClaims(token, claims, func(t *jwt.Token) (any, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method")
+		}
+		return s.jwtKey, nil
+	})
+	if err != nil || !t.Valid {
+		return nil, false
+	}
+	return claims, true
+}
+
+// session validates token and returns who it acts as. The bootstrap admin
+// ARTEX is checked against the settings-based password version (unchanged
+// behavior: a failed version read rejects every token; version 0 accepts any
+// valid token). Any other subject must be an active row in the users table
+// whose pwd_version matches the token's claim; an unknown or inactive subject,
+// or a stale version, is rejected. Role always comes from the server-side
+// record, never the token.
+func (s *Server) session(token string) (principal, bool) {
+	claims, ok := s.parseClaims(token)
+	if !ok {
+		return principal{}, false
+	}
+	sub := claims.Subject
+	if sub == "" {
+		return principal{}, false
+	}
+	if strings.EqualFold(sub, bootstrapAdmin) {
+		if s.pwdState.Load() == pwdUnreadable {
+			return principal{}, false
+		}
+		if v := s.pwdVersion.Load(); v > 0 && claims.Pwd != v {
+			return principal{}, false
+		}
+		return principal{username: bootstrapAdmin, role: roleAdmin}, true
+	}
+	rec, found := s.lookupUser(sub)
+	if !found || !rec.active {
+		return principal{}, false
+	}
+	if claims.Pwd != rec.pwdVersion {
+		return principal{}, false
+	}
+	return principal{username: sub, role: rec.role}, true
 }
 
 func (s *Server) passwordHashKey() string {
@@ -345,7 +405,8 @@ func (s *Server) requireAuth(h http.Handler) http.Handler {
 			writeErr(w, 401, "Unauthorized")
 			return
 		}
-		if !s.sessionOK(tok) {
+		id, ok := s.session(tok)
+		if !ok {
 			writeErr(w, 401, "token is invalid or expired")
 			return
 		}
@@ -356,7 +417,7 @@ func (s *Server) requireAuth(h http.Handler) http.Handler {
 				return
 			}
 		}
-		h.ServeHTTP(w, r)
+		h.ServeHTTP(w, r.WithContext(withIdentity(r.Context(), id)))
 	})
 }
 
@@ -540,7 +601,8 @@ func (s *Server) authChangePassword(w http.ResponseWriter, r *http.Request) {
 	if pg == nil {
 		return
 	}
-	if !s.sessionOK(extractToken(r)) {
+	id, ok := s.session(extractToken(r))
+	if !ok {
 		writeErr(w, 401, "Unauthorized")
 		return
 	}
@@ -564,6 +626,12 @@ func (s *Server) authChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	if msg := validatePassword(req.NewPassword); msg != "" {
 		writeErr(w, 400, msg)
+		return
+	}
+	// Additional (non-ARTEX) accounts change their own password against the
+	// users table; the ARTEX bootstrap admin keeps the settings-based path.
+	if !strings.EqualFold(id.username, bootstrapAdmin) {
+		s.changeUserPassword(w, r, id.username, req.OldPassword, req.NewPassword)
 		return
 	}
 	hash, ok, err := pg.GetSetting(s.passwordHashKey())
@@ -593,6 +661,37 @@ func (s *Server) authChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	s.passwordChangeReset(r)
 	s.applyPasswordVersion(version)
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// changeUserPassword changes an additional account's own password. Bumping
+// pwd_version invalidates the caller's other live sessions; this response has no
+// replacement token, so the frontend re-logs in (matching the ARTEX path).
+func (s *Server) changeUserPassword(w http.ResponseWriter, r *http.Request, username, oldPassword, newPassword string) {
+	u, err := s.m.pg.Users().GetByName(username)
+	if err == db.ErrUserNotFound {
+		writeErr(w, 401, "Unauthorized")
+		return
+	}
+	if err != nil {
+		writeErr(w, 503, errDataSourceUnavailable)
+		return
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(u.Hash), []byte(oldPassword)); err != nil {
+		writeErr(w, 401, "Current password is wrong")
+		return
+	}
+	newHash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		writeErr(w, 500, "Password encryption failed")
+		return
+	}
+	if _, err := s.m.pg.Users().SetPassword(u.ID, string(newHash)); err != nil {
+		writeErr(w, 500, "Save failed: "+err.Error())
+		return
+	}
+	s.passwordChangeReset(r)
+	s.reloadUsers()
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -645,8 +744,10 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request, getSetting func(s
 		writeErr(w, 400, "Invalid request format")
 		return
 	}
-	if req.Username != "ARTEX" {
-		writeErr(w, 401, "Incorrect username or password")
+	// A username other than the bootstrap ARTEX admin is an additional account
+	// in the users table (see loginUser). ARTEX keeps the settings-based path.
+	if !strings.EqualFold(req.Username, bootstrapAdmin) {
+		s.loginUser(w, ip, req.Username, req.Password)
 		return
 	}
 	hash, ok, err := getSetting(s.passwordHashKey())
@@ -670,7 +771,44 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request, getSetting func(s
 		writeErr(w, 503, errDataSourceUnavailable)
 		return
 	}
-	tok, err := signJWTVersion(s.jwtKey, s.pwdVersion.Load())
+	tok, err := signJWTUser(s.jwtKey, bootstrapAdmin, roleAdmin, s.pwdVersion.Load())
+	if err != nil {
+		writeErr(w, 500, "token generation failed")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"token": tok})
+}
+
+// loginUser logs in an additional (non-ARTEX) account from the users table. The
+// per-IP limit is already charged by the caller and cleared here on success. An
+// unknown username, a wrong password, and an inactive account all answer with
+// the same generic 401 so the response does not reveal which accounts exist.
+func (s *Server) loginUser(w http.ResponseWriter, ip, username, password string) {
+	if s.m == nil || s.m.pg == nil {
+		writeErr(w, 503, errDataSourceUnavailable)
+		return
+	}
+	u, err := s.m.pg.Users().GetByName(username)
+	if err == db.ErrUserNotFound {
+		writeErr(w, 401, "Incorrect username or password")
+		return
+	}
+	if err != nil {
+		writeErr(w, 503, errDataSourceUnavailable)
+		return
+	}
+	if !u.Active {
+		writeErr(w, 401, "Incorrect username or password")
+		return
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(u.Hash), []byte(password)); err != nil {
+		writeErr(w, 401, "Incorrect username or password")
+		return
+	}
+	s.loginLimit.reset(ip)
+	// Make sure this session validates against the account's current state.
+	s.reloadUsers()
+	tok, err := signJWTUser(s.jwtKey, u.Username, u.Role, u.PwdVersion)
 	if err != nil {
 		writeErr(w, 500, "token generation failed")
 		return

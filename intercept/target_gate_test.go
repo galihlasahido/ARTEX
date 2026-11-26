@@ -21,6 +21,7 @@ type fakeStore struct {
 	rules  []db.AssetInterceptRule
 	pins   []*db.TargetPin
 	exempt []db.TargetExemption
+	scope  []db.TaskScope
 	fail   map[string]error // by method name
 	reads  int
 	logged []db.TargetDecision
@@ -55,6 +56,15 @@ func (s *fakeStore) ActivePins(_ db.TargetScopeRef, host string, port int) ([]*d
 
 func (s *fakeStore) Exemptions() ([]db.TargetExemption, string, error) {
 	return s.exempt, fmt.Sprintf("digest-%d", len(s.exempt)), s.read("Exemptions")
+}
+
+func (s *fakeStore) DeclaredScope(db.TargetScopeRef) ([]db.TaskScope, error) {
+	if err := s.read("DeclaredScope"); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.scope), nil
 }
 
 func (s *fakeStore) LogDecision(r db.TargetDecision) error {
@@ -1065,3 +1075,73 @@ func TestSystemResolverAndLimits(t *testing.T) {
 		t.Fatalf("localhost = %v, want a loopback address", res.ips)
 	}
 }
+
+// TestDeclaredScopeAutoAllows checks the scope-aware gate: a target the task's
+// declared scope covers runs without an approval, while one outside it still
+// needs approval — the boundary that keeps a gated scan from spreading past the
+// assets the operator registered.
+func TestDeclaredScopeAutoAllows(t *testing.T) {
+	g := newGate(t)
+	g.store.scope = []db.TaskScope{
+		{Kind: "root_domain", Domain: "example.com", Source: "manual"},
+		{Kind: "cidr", Net: "10.1.0.0/16", Source: "manual"},
+	}
+	g.res.set("app.example.com", "93.184.216.34")
+	g.res.set("evil.org", "203.0.113.5")
+
+	// A subdomain of the declared root passes with no approval, logged as scope.
+	g.passes("in-scope subdomain", g.fetch("https://app.example.com/a"))
+	if got := g.store.outcomes(); !slices.Equal(got, []string{"allowed/scope_match"}) {
+		t.Fatalf("outcomes = %v, want [allowed/scope_match]", got)
+	}
+
+	// An IP inside the declared CIDR passes too.
+	g.passes("in-scope ip", g.check("Bash", `{"command":"curl http://10.1.2.3:8080/"}`))
+
+	// A host outside every declared row still needs an approval.
+	req := g.requests("out-of-scope host", g.fetch("https://evil.org/"))
+	if req.Host != "evil.org" {
+		t.Fatalf("request host = %q, want evil.org", req.Host)
+	}
+
+	// An IP outside the declared CIDR also needs an approval.
+	g.requests("out-of-scope ip", g.check("Bash", `{"command":"curl http://203.0.113.9/"}`))
+}
+
+// TestScopeCovers exercises the host/IP/CIDR matcher directly.
+func TestScopeCovers(t *testing.T) {
+	rows := []db.TaskScope{
+		{Kind: "root_domain", Domain: "example.com"},
+		{Kind: "subdomain", Domain: "api.acme.test"},
+		{Kind: "ip", Net: "192.0.2.10/32"},
+		{Kind: "cidr", Net: "10.0.0.0/8"},
+		{Kind: "company", CompanyID: ptr(int64(3))}, // never matches a host/IP
+	}
+	cases := []struct {
+		name string
+		t    Target
+		want bool
+	}{
+		{"root exact", Target{Kind: TargetDomain, Host: "example.com"}, true},
+		{"root subdomain", Target{Kind: TargetDomain, Host: "a.b.example.com"}, true},
+		{"root suffix trick", Target{Kind: TargetDomain, Host: "notexample.com"}, false},
+		{"other domain", Target{Kind: TargetDomain, Host: "evil.org"}, false},
+		{"declared subdomain", Target{Kind: TargetDomain, Host: "api.acme.test"}, true},
+		{"under declared subdomain", Target{Kind: TargetDomain, Host: "v2.api.acme.test"}, true},
+		{"sibling of subdomain", Target{Kind: TargetDomain, Host: "web.acme.test"}, false},
+		{"ip host match", Target{Kind: TargetIP, Host: "192.0.2.10"}, true},
+		{"ip host miss", Target{Kind: TargetIP, Host: "192.0.2.11"}, false},
+		{"ip in cidr", Target{Kind: TargetIP, Host: "10.9.8.7"}, true},
+		{"ip outside cidr", Target{Kind: TargetIP, Host: "11.0.0.1"}, false},
+		{"cidr subset", Target{Kind: TargetCIDR, Host: "10.1.0.0/16"}, true},
+		{"cidr wider", Target{Kind: TargetCIDR, Host: "10.0.0.0/4"}, false},
+	}
+	for _, c := range cases {
+		ct := &checkedTarget{Target: c.t}
+		if got := scopeCovers(rows, ct); got != c.want {
+			t.Errorf("%s: scopeCovers(%+v) = %v, want %v", c.name, c.t, got, c.want)
+		}
+	}
+}
+
+func ptr[T any](v T) *T { return &v }

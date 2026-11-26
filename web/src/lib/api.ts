@@ -4,6 +4,7 @@
 // are passed through and formatted at the call site.
 
 import { t } from "@/i18n";
+import type { Role } from "@/lib/access";
 import type { ChatMention } from "@/lib/chat-mentions";
 import { MOCK } from "@/lib/mock/enabled";
 import { mockHandle } from "@/lib/mock/handler";
@@ -17,8 +18,6 @@ import type {
   Asset,
   AssetInterceptRule,
   AssetInterceptRuleInput,
-  TaskCredential,
-  TaskCredentialInput,
   Audit,
   BatchCategoryItem,
   BatchControlItem,
@@ -43,8 +42,8 @@ import type {
   FindingDeepenResponse,
   FindingGroupsPage,
   FindingQuery,
-  FindingRetest,
   FindingReportState,
+  FindingRetest,
   FindingStats,
   FindingStatus,
   FindingsPage,
@@ -67,6 +66,7 @@ import type {
   LLMTask,
   MCPServer,
   MCPTool,
+  Me,
   MissingSkill,
   ModelTokenStat,
   NotificationChannel,
@@ -96,6 +96,8 @@ import type {
   TaskAssetScopeMutation,
   TaskCategory,
   TaskConstraint,
+  TaskCredential,
+  TaskCredentialInput,
   TaskGoal,
   TaskLLMResolutions,
   TaskNode,
@@ -117,6 +119,8 @@ import type {
   TrafficStreamDirection,
   TrafficStreamPage,
   UsageStats,
+  User,
+  UserPatch,
   WorkspaceFile,
   WorkspaceListing,
 } from "@/lib/types";
@@ -290,6 +294,13 @@ export const api = {
     post<{ token: string }>("/auth/init", { password, setup_token: setupToken }),
   changePassword: (oldPassword: string, newPassword: string) =>
     post<{ ok: boolean }>("/auth/change-password", { old_password: oldPassword, new_password: newPassword }),
+
+  // ---- identity & user management ----
+  me: () => get<Me>("/me"),
+  users: () => get<User[]>("/users"),
+  createUser: (username: string, password: string, role: Role) => post<User>("/users", { username, password, role }),
+  updateUser: (id: number, body: UserPatch) => patch<User>(`/users/${id}`, body),
+  deleteUser: (id: number) => del<{ ok: boolean }>(`/users/${id}`),
 
   // ---- tasks ----
   tasks: (companyId: number | null = null) =>
@@ -752,7 +763,13 @@ export const api = {
   // Save a vulnerability's name/class/severity in one call (inline edit in the findings list); only present fields are sent.
   updateFinding: (
     id: string,
-    fields: { name?: string; vulnclass?: string; severity?: Severity; status?: FindingStatus; report_state?: FindingReportState },
+    fields: {
+      name?: string;
+      vulnclass?: string;
+      severity?: Severity;
+      status?: FindingStatus;
+      report_state?: FindingReportState;
+    },
   ) => patch<Finding>(`/exploration/findings/${id}`, fields),
   // Delete a vulnerability: removes the findings record + the source exploration node (gone from the findings list, the task findings tab, and the exploration graph together).
   deleteFinding: (id: string) => del<{ deleted: boolean; id: number }>(`/exploration/findings/${id}`),
@@ -1023,8 +1040,7 @@ export const api = {
   // Channels are multi-instance resources (several bots of the same kind, each with its own
   // filter rules), so they form their own group instead of the flat settings key/value store.
   notifyMeta: () => get<NotificationMeta>(`/notify/meta`),
-  notifyChannels: () =>
-    get<{ channels: NotificationChannel[] }>(`/notify/channels`).then((r) => arr(r.channels)),
+  notifyChannels: () => get<{ channels: NotificationChannel[] }>(`/notify/channels`).then((r) => arr(r.channels)),
   notifyCreateChannel: (payload: {
     name: string;
     kind: string;
@@ -1321,8 +1337,12 @@ export const api = {
     t: Pick<Tool, "description" | "schema" | "agents" | "enabled" | "kind" | "exec" | "deferred">,
   ) => put<{ ok: boolean }>(`/tools/custom/${key}`, t),
   deleteCustomTool: (key: string) => del<{ deleted: string }>(`/tools/custom/${key}`),
-  testCustomTool: (body: { key?: string; kind: string; exec: Record<string, unknown>; params: Record<string, unknown> }) =>
-    post<{ output: string; is_error: boolean }>("/tools/custom/test", body),
+  testCustomTool: (body: {
+    key?: string;
+    kind: string;
+    exec: Record<string, unknown>;
+    params: Record<string, unknown>;
+  }) => post<{ output: string; is_error: boolean }>("/tools/custom/test", body),
   detectPython: () => post<{ python_interpreter: string }>("/settings/python/detect", {}),
 
   // ---- mcp ----

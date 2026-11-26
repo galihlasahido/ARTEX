@@ -29,6 +29,7 @@ func (s *Server) updateTaskMetadata(w http.ResponseWriter, r *http.Request) {
 		Pinned        *bool   `json:"pinned"`
 		PlanQuietMode *bool   `json:"plan_quiet_mode"`
 		TargetGate    *bool   `json:"target_gate"`
+		AutoApprove   *bool   `json:"auto_approve"`
 	}
 	if err := decode(w, r, &request); err != nil {
 		var tooLarge *http.MaxBytesError
@@ -39,8 +40,8 @@ func (s *Server) updateTaskMetadata(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if request.Name == nil && request.Pinned == nil && request.PlanQuietMode == nil && request.TargetGate == nil {
-		writeErr(w, http.StatusBadRequest, "at least one of name, pinned, plan_quiet_mode or target_gate must be provided")
+	if request.Name == nil && request.Pinned == nil && request.PlanQuietMode == nil && request.TargetGate == nil && request.AutoApprove == nil {
+		writeErr(w, http.StatusBadRequest, "at least one of name, pinned, plan_quiet_mode, target_gate or auto_approve must be provided")
 		return
 	}
 	if request.Name != nil {
@@ -55,7 +56,7 @@ func (s *Server) updateTaskMetadata(w http.ResponseWriter, r *http.Request) {
 		}
 		request.Name = &name
 	}
-	task, err := s.m.UpdateTaskMetadata(taskID, db.TaskPatch{Name: request.Name, Pinned: request.Pinned, PlanQuietMode: request.PlanQuietMode, TargetGate: request.TargetGate})
+	task, err := s.m.UpdateTaskMetadata(taskID, db.TaskPatch{Name: request.Name, Pinned: request.Pinned, PlanQuietMode: request.PlanQuietMode, TargetGate: request.TargetGate, AutoApprove: request.AutoApprove})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return

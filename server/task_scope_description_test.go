@@ -32,8 +32,8 @@ func TestTaskScopeDescriptionUpgrade(t *testing.T) {
 			want = seed.Desc
 		}
 	}
-	if want == "" || want == oldTaskScopeDescription {
-		t.Fatalf("precondition: code description must exist and differ from the old text: %q", want)
+	if want == "" || want == oldTaskScopeDescription || want == priorTaskScopeDescription {
+		t.Fatalf("precondition: code description must exist and differ from the earlier texts: %q", want)
 	}
 
 	old, err := pg.GetTool("add_task_scope")
@@ -68,6 +68,16 @@ func TestTaskScopeDescriptionUpgrade(t *testing.T) {
 	}
 	if got := resolvedTaskScopeDescription(t); got != want {
 		t.Fatalf("ToolResolve serves %q, want the new description", got)
+	}
+
+	// An install still holding the prior "not enforced: nothing blocks" text is
+	// upgraded too: it predates the scope-aware gate and is now false.
+	if err := pg.UpdateTool("add_task_scope", priorTaskScopeDescription, old.Schema, bindings, true); err != nil {
+		t.Fatal(err)
+	}
+	s.seedOrchestrationTools()
+	if desc, _ := snapshot(); desc != want {
+		t.Fatalf("prior description not replaced: %q", desc)
 	}
 
 	// An operator-edited description is left alone.

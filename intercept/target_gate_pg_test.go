@@ -473,3 +473,55 @@ func TestTargetBlockIsLoggedForConversation(t *testing.T) {
 		t.Fatalf("row = %+v audit=%+v", row.InterceptApprovalRow, row.Audit)
 	}
 }
+
+// TestDeclaredScopeFilters checks that dbTargetStore.DeclaredScope returns only
+// the enforceable, operator-set boundary — never an auto row the scan derived
+// for itself, a planner widening, or a kind that names no host/address. This is
+// what keeps the scope-aware gate from letting a scan authorise its own spread.
+func TestDeclaredScopeFilters(t *testing.T) {
+	d := targetTestDB(t)
+	task, err := d.CreateTaskWithOptions("declared scope", "filter test", db.TaskCreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.DeleteTask(task.ID) })
+	as := d.Assets()
+
+	// Operator-set, enforceable rows.
+	if _, err := as.AddAgentScope(task.ID, "root_domain", "example.com", "", "manual"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := as.AddAgentScope(task.ID, "ip", "192.0.2.5", "", "manual"); err != nil {
+		t.Fatal(err)
+	}
+	// Auto row the scan derived — must be excluded.
+	if err := as.AddAutoScope(task.ID, "subdomain", "auto.example.com", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	// Planner widening (source=agent, not covered by a declared row) — Expanded,
+	// so it must be excluded.
+	if _, err := as.AddAgentScope(task.ID, "root_domain", "other.org", "", "agent"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := (dbTargetStore{d}).DeclaredScope(db.TargetScopeRef{TaskID: task.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for _, r := range got {
+		switch {
+		case r.Domain != "":
+			keys = append(keys, r.Kind+":"+r.Domain)
+		case r.Net != "":
+			keys = append(keys, r.Kind+":"+r.Net)
+		default:
+			keys = append(keys, r.Kind)
+		}
+	}
+	slices.Sort(keys)
+	want := []string{"ip:192.0.2.5/32", "root_domain:example.com"}
+	if !slices.Equal(keys, want) {
+		t.Fatalf("DeclaredScope = %v, want %v", keys, want)
+	}
+}

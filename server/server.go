@@ -72,6 +72,12 @@ type Server struct {
 	authHashKey    string
 	authVersionKey string
 
+	// userCache mirrors the users table (additional accounts beyond the ARTEX
+	// bootstrap admin) for per-request session validation without a DB hit.
+	// Keyed by lower(username); reloaded at startup and after every user mutation.
+	userMu    sync.RWMutex
+	userCache map[string]userRec
+
 	// Test-only seams for pgListModels SSRF checks. All remain zero/nil in
 	// production (strict public-only default; only exact host:port entries in
 	// ARTEX_LLM_PRIVATE_ENDPOINTS may resolve to private addresses).
@@ -209,6 +215,8 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 	}
 	s.initSetupToken()
 	s.loadPasswordVersion()
+	s.userCache = map[string]userRec{}
+	s.reloadUsers()
 	s.initSideQuestions()
 	// Circuit-breaker thresholds/cooldowns are hot parameters on the failure path; push the global retry policy to the Registry once at startup,
 	// and again on every policy save (saveLLMRetryPolicy).
@@ -774,6 +782,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/auth/login", s.authLogin)
 	mux.HandleFunc("POST /api/auth/change-password", s.authChangePassword)
 
+	// Identity & user management. /api/me is any authenticated caller; the
+	// /api/users routes are admin-only (enforced by adminGate via adminPatterns).
+	mux.HandleFunc("GET /api/me", s.me)
+	mux.HandleFunc("GET /api/users", s.listUsers)
+	mux.HandleFunc("POST /api/users", s.createUser)
+	mux.HandleFunc("PATCH /api/users/{id}", s.updateUser)
+	mux.HandleFunc("DELETE /api/users/{id}", s.deleteUser)
+
 	mux.HandleFunc("GET /api/health", s.health)
 	mux.HandleFunc("GET /api/ready", s.ready)
 	mux.HandleFunc("GET /api/stats", s.stats)
@@ -1089,7 +1105,7 @@ func (s *Server) Handler() http.Handler {
 	// /api/* goes through CORS + JWT; everything else is served by the embedded
 	// frontend (public — auth is enforced client-side and on the API). With the
 	// no-embed build the webui handler just 404s (run `next dev` separately).
-	api := cors(s.requireAuth(mux))
+	api := cors(s.requireAuth(s.adminGate(mux)))
 	root := http.NewServeMux()
 	root.Handle("/api/", api)
 	webui := s.webuiHandler()
@@ -1766,6 +1782,7 @@ type createTaskReq struct {
 	PlanHeartbeatSeconds int      `json:"plan_heartbeat_seconds"`      // planner heartbeat interval (seconds); 0/omitted = default 600 (10min); floor = default = 600, lower values are raised to 600
 	PlanQuietMode        *bool    `json:"plan_quiet_mode,omitempty"`   // planner quiet-mode switch (#86); omitted = default on; false = edge rounds always plan
 	TargetGate           *bool    `json:"target_gate,omitempty"`       // approval gate for asset targets, opt-in; omitted/null = off
+	AutoApprove          *bool    `json:"auto_approve,omitempty"`      // automatic scan: auto-approve tool-call asks (ask -> allow); omitted/null = inherit the global default
 	SeedFirstIntent      *bool    `json:"seed_first_intent,omitempty"` // issue one seed intent at creation (content = description + goal) so a worker can start right away without waiting for the first planner round; omitted/null = default off, the standard plan-then-execute flow. Pass true explicitly to enable (for CTF tasks often solved in one work, this skips the pre-start planner round).
 	CoverageEnabled      *bool    `json:"coverage_enabled,omitempty"`  // asset coverage feature; omitted/null = default on (true). false = disables coverage calculation/display/auto-accumulated scope + hides add_task_scope/list_untested_assets. company links are unaffected.
 	// InterceptRules: task-level asset interception/allow rules (entered at creation, stored in task_intercept_rules, never the global table).
@@ -1842,6 +1859,12 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		def := s.m.pg.GetBool(settingTargetGateDefault, false)
 		req.TargetGate = &def
 	}
+	// Likewise inherit the global automatic-scan default (Settings → "Automatic
+	// scan") when the request does not state auto_approve. An explicit flag wins.
+	if req.AutoApprove == nil {
+		def := s.m.pg.GetBool(settingAutoApproveDefault, false)
+		req.AutoApprove = &def
+	}
 	t, err := s.m.CreateTaskWithOptions(req.Description, req.Goal, db.TaskCreateOptions{
 		Name: strings.TrimSpace(req.Name), CategoryID: req.CategoryID,
 		SourceTaskIDs: sourceIDs, CompanyIDs: req.CompanyIDs, LLMProfileIDs: req.LLMProfileIDs,
@@ -1850,6 +1873,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		InterceptRules:  interceptRules,
 		LLMRotate:       req.LLMRotate,
 		TargetGate:      req.TargetGate,
+		AutoApprove:     req.AutoApprove,
 	})
 	if err != nil {
 		if errors.Is(err, db.ErrTaskCategoryInvalid) || errors.Is(err, db.ErrTaskCategoryNotFound) {
@@ -3930,7 +3954,9 @@ func (s *Server) settingsPayload() map[string]any {
 		"traffic_capture":       s.m.TrafficEnabled(),
 		"agent_traffic_binding": s.m.pg.GetBool(settingAgentTrafficBinding, false),
 		// Default target approval gate for new tasks (per-task opt-in gate; off by default).
-		"target_gate_default":      s.m.pg.GetBool(settingTargetGateDefault, false),
+		"target_gate_default": s.m.pg.GetBool(settingTargetGateDefault, false),
+		// Default automatic-scan (auto-approve tool asks) for new tasks; off by default.
+		"auto_approve_default":     s.m.pg.GetBool(settingAutoApproveDefault, false),
 		"triage_profile_id":        s.triageProfileID(),
 		"triage_min_confidence":    s.triageMinConfidence(),
 		"llm_record":               s.m.LLMRecordEnabled(),
@@ -4015,7 +4041,11 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		// (confines scanning to in-scope destinations). Applies to tasks created
 		// afterwards; never changes an existing task's own flag.
 		TargetGateDefault *bool `json:"target_gate_default"`
-		LLMRecord         *bool `json:"llm_record"` // LLM recording switch (default off); takes effect immediately, no agent rebuild needed
+		// AutoApproveDefault: default value of a new task's automatic-scan opt-in
+		// (auto-approve tool-call asks). Applies to tasks created afterwards; never
+		// changes an existing task's own flag.
+		AutoApproveDefault *bool `json:"auto_approve_default"`
+		LLMRecord          *bool `json:"llm_record"` // LLM recording switch (default off); takes effect immediately, no agent rebuild needed
 		// Web search. WebSearchEnabled/Backend toggle the tool + backend; BraveKey/TavilyKey/KeenableKey
 		// are optional — omit (null) to leave a stored key untouched, send "" to clear. The Keenable
 		// key is optional even when its backend is selected: empty uses the keyless public endpoint.
@@ -4250,6 +4280,12 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.TargetGateDefault != nil {
 		if err := s.m.pg.SetBool(settingTargetGateDefault, *req.TargetGateDefault); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	if req.AutoApproveDefault != nil {
+		if err := s.m.pg.SetBool(settingAutoApproveDefault, *req.AutoApproveDefault); err != nil {
 			writeErr(w, 500, err.Error())
 			return
 		}

@@ -96,8 +96,12 @@ type TargetScope struct {
 	TaskID         string
 	ConversationID int64
 	Enabled        func() bool
-	WaitBound      time.Duration
-	Interceptor    *Interceptor
+	// AutoApprove reports the scope's automatic-scan opt-in: when it returns true,
+	// the guard turns a tool call the rules/judge/persistence would ask about into
+	// an allow. It never affects a deny or the target gate. nil = off.
+	AutoApprove func() bool
+	WaitBound   time.Duration
+	Interceptor *Interceptor
 
 	AssessmentIdentity config.AssessmentIdentity // operator-configured identity of this task only
 }

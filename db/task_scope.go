@@ -9,9 +9,11 @@ import (
 	"strings"
 )
 
-// TaskScope is one row of a task's test scope — coverage scope, not enforced: it is
-// the coverage denominator and the filter for asset queries, and nothing blocks a
-// tool call outside it. Rows come from insertAssets / intent asset_ids (source='auto',
+// TaskScope is one row of a task's test scope: the coverage denominator and the
+// filter for asset queries. When the task's target gate is on, an operator-set or
+// goal-declared host/IP/CIDR row is also the enforced boundary (intercept.scopeCovers:
+// an in-scope target runs without approval, one outside it needs operator approval);
+// auto rows and planner widenings never enforce. Rows come from insertAssets / intent asset_ids (source='auto',
 // conservative, one per explicitly-inserted asset), from the add_task_scope tool
 // (source='agent': the goal targets the decomposer registers, or planner widening),
 // or from the operator (source='manual'). An auto row counts toward coverage only

@@ -327,6 +327,13 @@ func (s *Server) toolSpawnTask() actool.CoreTool {
 					}
 				}
 			}
+			// Automatic scan propagates the same way: a child spawned from an
+			// auto-approve scope is created with automatic scan on.
+			var autoApprove *bool
+			if scope, ok := intercept.TargetScopeFromContext(ctx); ok && scope.AutoApprove != nil && scope.AutoApprove() {
+				on := true
+				autoApprove = &on
+			}
 			t, err := s.m.CreateTaskWithOptions(a.Description, a.Goal, db.TaskCreateOptions{
 				SourceTaskIDs:        sourceIDs,
 				LLMProfileIDs:        llmIDs,
@@ -334,6 +341,7 @@ func (s *Server) toolSpawnTask() actool.CoreTool {
 				PlanHeartbeatSeconds: a.PlanHeartbeatSeconds,
 				InterceptRules:       blockRules,
 				TargetGate:           gate,
+				AutoApprove:          autoApprove,
 			})
 			if err != nil {
 				return actool.Errorf(err.Error()), nil
@@ -574,7 +582,7 @@ func (s *Server) seedOrchestrationTools() {
 	s.seedFactInputSchema()           // restore record_fact single/batch contracts
 	s.seedFactSourceSchema()          // source enum on record_fact, added once per DB
 	s.refreshRecordFactContract()     // record_fact publishes the facts-only contract (one-time)
-	s.seedTaskScopeDescription()      // add_task_scope: "coverage scope, not enforced" replaces the authorization-boundary text
+	s.seedTaskScopeDescription()      // add_task_scope: current scope-aware wording replaces earlier seeded descriptions
 	// Note: pentest's default tool bindings need no migration — BuiltinToolSeeds already seeds
 	// list_assets/insert_assets/report_finding/list_findings/list_companies together with
 	// pentest at fresh initialization (no old DBs exist in this project, so no migration).
@@ -636,20 +644,36 @@ const oldTaskScopeDescription = "Add test scope to [this task] — this is the t
 	"value: for company pass the company name or id (the company must already exist); for root_domain/subdomain pass a domain; for ip/cidr pass an IP or range; for icp/keyword pass an ICP number or company keyword.\n" +
 	"Always give reason explaining the basis (auditable). Use the entries array for multiple entries."
 
+// priorTaskScopeDescription is the add_task_scope description seeded between commit
+// 0dc8bdf and the scope-aware target gate: it called task_scope "coverage scope, not
+// enforced" and claimed "nothing blocks a tool call outside it", which is false once
+// the gate enforces the declared scope. Kept verbatim so seedTaskScopeDescription can
+// replace a row that still holds exactly this text.
+const priorTaskScopeDescription = "Add test scope to [this task] — coverage scope, not enforced: it is the denominator of asset test coverage; nothing blocks a tool call outside it.\n" +
+	"Supported kinds: company (all assets under the company) / root_domain (a whole root domain, including all subdomains) / subdomain (a single precise subdomain) / ip / cidr / icp / keyword.\n" +
+	"Note: hosts a worker touches one by one are [automatically] added to the scope by the system (precise subdomains), but they count toward coverage and list_untested_assets only under a declared domain or IP root (a root_domain/subdomain/ip/cidr goal target or scope added here or manually; a company/icp/keyword entry is not such a root); this tool is for [deliberate widening] — pulling in a whole root domain / whole company, or adding a specific subdomain/IP.\n" +
+	"value: for company pass the company name or id (the company must already exist); for root_domain/subdomain pass a domain; for ip/cidr pass an IP or range; for icp/keyword pass an ICP number or company keyword.\n" +
+	"Always give reason explaining the basis (auditable). Use the entries array for multiple entries."
+
 // seedTaskScopeDescription brings the add_task_scope description of existing
 // databases to the code text (SeedTool is first-insert only, and ToolResolve serves
-// the stored description, so without this the model would keep reading
-// "authorization boundary"). Idempotent: only a system row still holding the old
-// seeded text is replaced; an absent row or an operator-edited text is left alone.
+// the stored description, so without this the model would keep reading an earlier
+// wording — "authorization boundary", or "not enforced: nothing blocks a tool call
+// outside it"). Idempotent: only a system row still holding one of those earlier
+// seeded texts is replaced; an absent row or an operator-edited text is left alone.
 func (s *Server) seedTaskScopeDescription() {
 	for _, seed := range agent.BuiltinToolSeeds() {
 		if seed.Key != "add_task_scope" {
 			continue
 		}
-		_, err := s.m.pg.Exec(`UPDATE tools SET description=$1,updated_at=now()
-WHERE key='add_task_scope' AND system AND description=$2`, seed.Desc, oldTaskScopeDescription)
-		if err != nil {
-			log.Printf("[tools] upgrade add_task_scope description: %v", err)
+		for _, old := range []string{oldTaskScopeDescription, priorTaskScopeDescription} {
+			if old == seed.Desc {
+				continue
+			}
+			if _, err := s.m.pg.Exec(`UPDATE tools SET description=$1,updated_at=now()
+WHERE key='add_task_scope' AND system AND description=$2`, seed.Desc, old); err != nil {
+				log.Printf("[tools] upgrade add_task_scope description: %v", err)
+			}
 		}
 		return
 	}

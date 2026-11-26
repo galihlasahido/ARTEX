@@ -79,7 +79,10 @@ type Task struct {
 	llmMu                sync.RWMutex
 	// targetGate is the task's opt-in to the approval gate for asset targets.
 	// Atomic: it is switched through the API while tool calls read it.
-	targetGate  atomic.Bool
+	targetGate atomic.Bool
+	// autoApprove is the task's opt-in to automatic scan (ask -> allow). Atomic for
+	// the same reason: switched through the API while tool calls read it.
+	autoApprove atomic.Bool
 	interceptor *intercept.Interceptor // owner of the target gate, handed to the scope
 
 	assessmentIdentity config.AssessmentIdentity // assigned by the manager before publishing the task
@@ -311,12 +314,17 @@ const (
 	// explicit target_gate flag starts with the gate enabled. It never changes
 	// a task that already exists — those keep their own per-task flag.
 	settingTargetGateDefault = "target_gate_default"
-	settingWebSearchOn       = "web_search_enabled"
-	settingWebSearchBackend  = "web_search_backend"
-	settingBraveKey          = "brave_search_api_key"
-	settingTavilyKey         = "tavily_search_api_key"
-	settingKeenableKey       = "keenable_search_api_key"
-	settingWebSearchProxy    = "web_search_proxy"
+	// settingAutoApproveDefault is the default value of a new task's automatic-scan
+	// opt-in. Off by default; when on, a task created without an explicit
+	// auto_approve flag starts with automatic scan enabled. It never changes a task
+	// that already exists — those keep their own per-task flag.
+	settingAutoApproveDefault = "auto_approve_default"
+	settingWebSearchOn        = "web_search_enabled"
+	settingWebSearchBackend   = "web_search_backend"
+	settingBraveKey           = "brave_search_api_key"
+	settingTavilyKey          = "tavily_search_api_key"
+	settingKeenableKey        = "keenable_search_api_key"
+	settingWebSearchProxy     = "web_search_proxy"
 	// settingGlobalProxy is the global egress proxy for all target traffic
 	// (http/https/socks5). Empty = direct. Distinct from web_search_proxy (which
 	// only routes the search backend) and the per-profile LLM proxy.
@@ -1043,6 +1051,7 @@ func taskFromPG(pt *pgdb.Task, store *pgdb.ExplorationStore, ic *intercept.Inter
 		interceptor: ic,
 	}
 	t.targetGate.Store(pt.TargetGate)
+	t.autoApprove.Store(pt.AutoApprove)
 	return t
 }
 
@@ -1058,7 +1067,8 @@ func (m *Manager) taskFromPG(pt *pgdb.Task) *Task {
 // API takes effect on the next tool call.
 func (t *Task) targetScope(wait time.Duration) intercept.TargetScope {
 	return intercept.TargetScope{
-		TaskID: t.ID, Enabled: t.targetGate.Load, WaitBound: wait, Interceptor: t.interceptor,
+		TaskID: t.ID, Enabled: t.targetGate.Load, AutoApprove: t.autoApprove.Load,
+		WaitBound: wait, Interceptor: t.interceptor,
 		AssessmentIdentity: t.assessmentIdentity,
 	}
 }
@@ -1117,6 +1127,7 @@ func (m *Manager) UpdateTaskMetadata(taskID string, patch pgdb.TaskPatch) (*Task
 	// planning round (edge or heartbeat) already respects the new value.
 	task.PlanQuietMode = updated.PlanQuietMode
 	task.targetGate.Store(updated.TargetGate)
+	task.autoApprove.Store(updated.AutoApprove)
 	return task, nil
 }
 

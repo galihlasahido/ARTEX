@@ -17,7 +17,9 @@ import {
   CommandList,
   CommandSeparator,
 } from "@/components/ui/command";
+import { useCurrentUser } from "@/hooks/use-current-user";
 import { t } from "@/i18n";
+import { canAccess, type Role } from "@/lib/access";
 import type { NavMainItem } from "@/navigation/sidebar/sidebar-items";
 import { sidebarItems } from "@/navigation/sidebar/sidebar-items";
 
@@ -68,8 +70,6 @@ function getAvailableItems(items: SearchItem[]) {
   return items.filter((item) => !item.disabled && !item.url.includes("coming-soon"));
 }
 
-const recommendations = getAvailableItems(searchItems);
-
 function groupBy(items: SearchItem[]) {
   const groups = [...new Set(items.map((item) => item.group))];
   return groups.map((group) => ({
@@ -82,6 +82,13 @@ export function SearchDialog() {
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState("");
   const router = useRouter();
+  const currentUser = useCurrentUser();
+  // Hide pages this role cannot open, so search cannot navigate past the gate.
+  const visibleItems = React.useMemo(
+    () => searchItems.filter((item) => canAccess(currentUser.role as Role, item.url)),
+    [currentUser.role],
+  );
+  const visibleRecommendations = React.useMemo(() => getAvailableItems(visibleItems), [visibleItems]);
 
   React.useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -149,7 +156,7 @@ export function SearchDialog() {
           <CommandInput placeholder={t("Search dashboards, users, and more…")} value={query} onValueChange={setQuery} />
           <CommandList>
             <CommandEmpty>{t("No results found.")}</CommandEmpty>
-            {query ? renderGroups(searchItems) : renderGroups(recommendations)}
+            {query ? renderGroups(visibleItems) : renderGroups(visibleRecommendations)}
           </CommandList>
         </Command>
       </CommandDialog>

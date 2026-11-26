@@ -39,6 +39,12 @@ type targetStore interface {
 	// ActivePins returns the active pins that may cover (host, port) in scope,
 	// the pin on the exact port first.
 	ActivePins(scope db.TargetScopeRef, host string, port int) ([]*db.TargetPin, error)
+	// DeclaredScope returns the task's enforceable test scope: the operator-set and
+	// goal-declared host/IP/CIDR rows only — never the auto rows the scan derives
+	// for itself, and never a planner widening. A target these rows cover is
+	// allowed without an approval; it is the boundary that keeps a gated scan from
+	// spreading past the assets the operator registered. Empty for a conversation.
+	DeclaredScope(scope db.TargetScopeRef) ([]db.TaskScope, error)
 	// Exemptions returns the stored exemption list and its digest.
 	Exemptions() ([]db.TargetExemption, string, error)
 	// LogDecision records an outcome no human took.
@@ -61,6 +67,31 @@ func (s dbTargetStore) BlockRules(scope db.TargetScopeRef) ([]db.AssetInterceptR
 
 func (s dbTargetStore) ActivePins(scope db.TargetScopeRef, host string, port int) ([]*db.TargetPin, error) {
 	return s.d.ActiveTargetPins(scope, host, port)
+}
+
+func (s dbTargetStore) DeclaredScope(scope db.TargetScopeRef) ([]db.TaskScope, error) {
+	if scope.TaskID == 0 {
+		return nil, nil
+	}
+	rows, err := s.d.Assets().ListTaskScope(scope.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]db.TaskScope, 0, len(rows))
+	for _, r := range rows {
+		// Auto rows are target-derived and a planner widening (Expanded) enlarges
+		// the range on the agent's own initiative; neither is a boundary the
+		// operator set, so neither grants an auto-allow. Company/icp/keyword rows
+		// name no host or address the gate can match.
+		if r.Source == "auto" || r.Expanded {
+			continue
+		}
+		switch r.Kind {
+		case "root_domain", "subdomain", "ip", "cidr":
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }
 
 func (s dbTargetStore) Exemptions() ([]db.TargetExemption, string, error) {
@@ -125,6 +156,7 @@ const (
 	coverStored   = "stored"    // a stored exemption that holds
 	coverPin      = "pin"       // a pin that holds every resolved address
 	coverNameOnly = "name_only" // a pin that is name-only for this call
+	coverScope    = "scope"     // a declared task-scope row covers the target
 )
 
 // checkedTarget is one target of the call and what the gate learned about it.
@@ -161,6 +193,13 @@ func (c *targetCheck) run(targets []Target) ([]TargetRequest, TargetResult) {
 	ex, err := i.loadExemptions()
 	if err != nil {
 		return c.block(TargetGateUnavailable, "gate_unavailable", first, "the exemption list could not be read: "+err.Error())
+	}
+	// The declared test scope auto-allows an in-scope target. Reading it is an
+	// optimisation over the approval path, never a licence: if it cannot be read,
+	// fall back to asking for every target rather than fail open and auto-allow.
+	scopeRows, serr := i.targets.DeclaredScope(c.ref)
+	if serr != nil {
+		scopeRows = nil
 	}
 
 	// Block rules come first, and an exempt or pinned host that matches one is
@@ -236,6 +275,15 @@ func (c *targetCheck) run(targets []Target) ([]TargetRequest, TargetResult) {
 		}
 		if ct.err != nil {
 			return c.block(TargetResolveFailed, "resolve_failed", ct, c.resolveFailure(ct))
+		}
+		// A target the operator's declared scope covers is allowed outright: the
+		// scope is the authorisation, so it needs no pin and raises no approval.
+		// Block rules have already run (on the name and on the resolved address),
+		// so an in-scope target that a rule denies was blocked before this point.
+		if scopeCovers(scopeRows, ct) {
+			ct.cover = coverScope
+			uses = append(uses, func() { c.scopeUsed(ct) })
+			continue
 		}
 		pins, err := i.targets.ActivePins(c.ref, ct.Host, ct.Port)
 		if err != nil {
@@ -349,6 +397,18 @@ func (c *targetCheck) exemptUsed(ct *checkedTarget, digest string) {
 		digest, ct.audit("exempt"))
 }
 
+// scopeUsed logs the first call of this process that a declared scope row covers,
+// per scope, host and port. The row records that the task's declared scope
+// authorised the target, not an approval of this one call.
+func (c *targetCheck) scopeUsed(ct *checkedTarget) {
+	key := "scope|" + c.scope.scopeName() + "|" + db.TargetKey(ct.Host, ct.Port)
+	if _, seen := c.i.firstUse.LoadOrStore(key, true); seen {
+		return
+	}
+	c.log("allowed", fmt.Sprintf("Target %s is within the declared test scope of %s.", ct.Target, c.scope.scopeName()),
+		"", ct.audit("scope_match"))
+}
+
 // pinUsed logs the first call of this process that a pin version covers.
 // nameOnly is whether the upstream proxy made every pin name-only for the call:
 // the row records the effective state, not only the pin's mark.
@@ -377,6 +437,54 @@ func blockRule(rules []db.AssetInterceptRule, ct *checkedTarget) (db.AssetInterc
 	}
 	rule, _, hit := db.MatchAssetInterceptRules(rules, domains, ips, nil)
 	return rule, hit
+}
+
+// scopeCovers reports whether a declared task-scope row authorises the target:
+// a domain at or beneath a declared root_domain or subdomain, an IP inside a
+// declared ip/cidr, or a CIDR that is a subset of one. The rows are the enforceable
+// kinds only (DeclaredScope filters the rest), so a company, icp or keyword row —
+// which names no host or address the gate can match — never reaches here.
+func scopeCovers(rows []db.TaskScope, ct *checkedTarget) bool {
+	switch ct.Kind {
+	case TargetDomain:
+		for _, r := range rows {
+			if r.Kind != "root_domain" && r.Kind != "subdomain" {
+				continue
+			}
+			if d := r.Domain; d != "" && (ct.Host == d || strings.HasSuffix(ct.Host, "."+d)) {
+				return true
+			}
+		}
+	case TargetIP:
+		addr, err := netip.ParseAddr(ct.Host)
+		if err != nil {
+			return false
+		}
+		for _, r := range rows {
+			if r.Kind != "ip" && r.Kind != "cidr" || r.Net == "" {
+				continue
+			}
+			if p, err := netip.ParsePrefix(r.Net); err == nil && p.Contains(addr) {
+				return true
+			}
+		}
+	case TargetCIDR:
+		// ct.Host is the masked prefix, so its Addr is the network address; a
+		// declared prefix that is no narrower and contains it covers the whole range.
+		want, err := netip.ParsePrefix(ct.Host)
+		if err != nil {
+			return false
+		}
+		for _, r := range rows {
+			if r.Kind != "ip" && r.Kind != "cidr" || r.Net == "" {
+				continue
+			}
+			if p, err := netip.ParsePrefix(r.Net); err == nil && p.Bits() <= want.Bits() && p.Contains(want.Addr()) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // exemptionHolds reports whether the stored exemption on a target applies. On a

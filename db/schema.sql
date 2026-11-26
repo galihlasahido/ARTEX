@@ -367,6 +367,25 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Additional login accounts layered on top of the bootstrap "ARTEX" admin
+-- (which stays in settings: auth.password_hash). role gates page/API access
+-- ('admin' = everything incl. user management; 'user' = operator pages only).
+-- pwd_version is bumped on password change, admin reset, role change and
+-- deactivation, so the server can invalidate a user's live session tokens.
+CREATE TABLE IF NOT EXISTS users (
+    id            BIGSERIAL PRIMARY KEY,
+    username      TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    role          TEXT NOT NULL DEFAULT 'user',
+    active        BOOLEAN NOT NULL DEFAULT true,
+    pwd_version   BIGINT NOT NULL DEFAULT 1,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT users_role_check CHECK (role IN ('admin','user'))
+);
+-- Case-insensitive uniqueness so "Alice" and "alice" cannot both exist.
+CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_key ON users (lower(username));
+
 CREATE TABLE IF NOT EXISTS llm_profiles (
     id               BIGSERIAL PRIMARY KEY,
     name             TEXT NOT NULL UNIQUE,
@@ -563,6 +582,10 @@ ALTER TABLE tasks ADD COLUMN IF NOT EXISTS plan_quiet_mode BOOLEAN NOT NULL DEFA
 -- Approval gate for asset targets, opt-in per task; backfills old databases. false (default) = no gate, behaviour unchanged.
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS target_gate BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS llm_rotate BOOLEAN NOT NULL DEFAULT false;
+-- Automatic scan: when on, a tool call the rules/judge/persistence would ask about is
+-- auto-approved (ask -> allow) so a task runs without stopping. Deny stays deny, and the
+-- target gate still asks for out-of-scope destinations. Opt-in per task; false (default) = unchanged.
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS auto_approve BOOLEAN NOT NULL DEFAULT false;
 -- Concurrency-limit hold state; backfills old databases. true=queued due to the concurrency limit, auto-starts when a slot frees up.
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS queued BOOLEAN NOT NULL DEFAULT false;
 -- Asset coverage feature switch; backfills old databases. true (default)=compute/show test coverage, auto-accumulate test scope,

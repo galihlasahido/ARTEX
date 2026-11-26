@@ -2,7 +2,15 @@
 
 import * as React from "react";
 
-import { CpuIcon, FlaskConicalIcon, KeyboardIcon, RadioTowerIcon, SearchIcon, ShieldAlertIcon } from "lucide-react";
+import {
+  CpuIcon,
+  FlaskConicalIcon,
+  KeyboardIcon,
+  RadioTowerIcon,
+  SearchIcon,
+  ShieldAlertIcon,
+  ZapIcon,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -33,6 +41,7 @@ export default function SystemSettingsPage() {
   const [trafficCapture, setTrafficCapture] = React.useState(false);
   const [agentTrafficBinding, setAgentTrafficBinding] = React.useState(false);
   const [targetGateDefault, setTargetGateDefault] = React.useState(false);
+  const [autoApproveDefault, setAutoApproveDefault] = React.useState(false);
   const [webSearch, setWebSearch] = React.useState(false);
   const [backend, setBackend] = React.useState("ddgs");
   const [braveKeySet, setBraveKeySet] = React.useState(false);
@@ -66,6 +75,7 @@ export default function SystemSettingsPage() {
     setTrafficCapture(!!s.traffic_capture);
     setAgentTrafficBinding(!!s.agent_traffic_binding);
     setTargetGateDefault(!!s.target_gate_default);
+    setAutoApproveDefault(!!s.auto_approve_default);
     setWebSearch(!!s.web_search_enabled);
     setBackend(s.web_search_backend || "ddgs");
     setBraveKeySet(!!s.brave_key_set);
@@ -166,10 +176,34 @@ export default function SystemSettingsPage() {
       .setSettings({ target_gate_default: v })
       .then((s) => {
         apply(s);
-        toast.success(v ? t("New tasks will confine scanning to in-scope targets") : t("New tasks will not gate out-of-scope targets"));
+        toast.success(
+          v
+            ? t("New tasks will confine scanning to in-scope targets")
+            : t("New tasks will not gate out-of-scope targets"),
+        );
       })
       .catch((e) => {
         setTargetGateDefault(!v);
+        toast.error(t("Save failed: {error}", { error: (e as Error).message }));
+      })
+      .finally(() => setSaving(false));
+  };
+
+  const toggleAutoApproveDefault = (v: boolean) => {
+    setAutoApproveDefault(v);
+    setSaving(true);
+    api
+      .setSettings({ auto_approve_default: v })
+      .then((s) => {
+        apply(s);
+        toast.success(
+          v
+            ? t("New tasks will scan automatically, without approval prompts")
+            : t("New tasks will stop for approval as before"),
+        );
+      })
+      .catch((e) => {
+        setAutoApproveDefault(!v);
         toast.error(t("Save failed: {error}", { error: (e as Error).message }));
       })
       .finally(() => setSaving(false));
@@ -277,7 +311,9 @@ export default function SystemSettingsPage() {
       .setSettings({ global_proxy: globalProxyInput.trim() })
       .then((s) => {
         apply(s);
-        toast.success(globalProxyInput.trim() ? t("Saved global proxy") : t("Cleared global proxy (direct connection)"));
+        toast.success(
+          globalProxyInput.trim() ? t("Saved global proxy") : t("Cleared global proxy (direct connection)"),
+        );
       })
       .catch((e) => toast.error(t("Save failed: {error}", { error: (e as Error).message })))
       .finally(() => setSavingGlobalProxy(false));
@@ -297,7 +333,12 @@ export default function SystemSettingsPage() {
       })
       .then((r) => {
         if (r.ok)
-          toast.success(t("Search test succeeded · {backend} returned {count} results", { backend: r.backend ?? "", count: r.count ?? 0 }));
+          toast.success(
+            t("Search test succeeded · {backend} returned {count} results", {
+              backend: r.backend ?? "",
+              count: r.count ?? 0,
+            }),
+          );
         else toast.error(t("Search test failed: {error}", { error: r.error || t("unknown error") }));
       })
       .catch((e) => toast.error(t("Search test failed: {error}", { error: (e as Error).message })))
@@ -341,7 +382,9 @@ export default function SystemSettingsPage() {
           <CardContent className="space-y-2.5">
             <div className="flex items-center justify-between gap-4">
               <Label htmlFor="traffic-capture" className="text-sm font-normal text-muted-foreground">
-                {trafficCapture ? t("On · recording traffic and injecting proxy") : t("Off · no recording, no proxy injection")}
+                {trafficCapture
+                  ? t("On · recording traffic and injecting proxy")
+                  : t("Off · no recording, no proxy injection")}
               </Label>
               <Switch
                 id="traffic-capture"
@@ -352,7 +395,9 @@ export default function SystemSettingsPage() {
             </div>
             {loaded && !trafficCapture && (
               <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
-                {t("Traffic capture is off: findings stay recorded, but captured HTTP traffic is required for provable findings.")}
+                {t(
+                  "Traffic capture is off: findings stay recorded, but captured HTTP traffic is required for provable findings.",
+                )}
               </p>
             )}
           </CardContent>
@@ -412,7 +457,9 @@ export default function SystemSettingsPage() {
           </CardHeader>
           <CardContent className="flex items-center justify-between gap-4">
             <Label htmlFor="target-gate-default" className="text-sm font-normal text-muted-foreground">
-              {targetGateDefault ? t("On · new tasks confine scanning to their scope") : t("Off · new tasks can reach any discovered host")}
+              {targetGateDefault
+                ? t("On · new tasks confine scanning to their scope")
+                : t("Off · new tasks can reach any discovered host")}
             </Label>
             <Switch
               id="target-gate-default"
@@ -420,6 +467,40 @@ export default function SystemSettingsPage() {
               checked={targetGateDefault}
               disabled={!loaded || saving}
               onCheckedChange={toggleTargetGateDefault}
+            />
+          </CardContent>
+        </Card>
+
+        <Card className="mb-4 break-inside-avoid md:mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <ZapIcon className="size-4" />
+              {t("Automatic scan")}
+            </CardTitle>
+            <CardDescription id="auto-approve-default-description">
+              {rich(
+                t(
+                  "Off by default. When enabled, every new task auto-approves tool-call prompts — the intercept <b>ask</b> rules (sqlmap, hydra, impacket, …), the model fallback judge, and manual asks — so a scan runs end to end without stopping for you.",
+                ),
+              )}
+              <br />
+              {t(
+                "Destructive built-in rules (rm -rf, DROP DATABASE, …) are still denied, and the target gate still asks before reaching an out-of-scope host, so this does not let a scan spread. A default for tasks created afterwards; it never changes an existing task, and a task can be overridden via the API.",
+              )}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex items-center justify-between gap-4">
+            <Label htmlFor="auto-approve-default" className="text-sm font-normal text-muted-foreground">
+              {autoApproveDefault
+                ? t("On · new tasks scan without approval prompts")
+                : t("Off · new tasks stop for approval")}
+            </Label>
+            <Switch
+              id="auto-approve-default"
+              aria-describedby="auto-approve-default-description"
+              checked={autoApproveDefault}
+              disabled={!loaded || saving}
+              onCheckedChange={toggleAutoApproveDefault}
             />
           </CardContent>
         </Card>
@@ -666,7 +747,9 @@ export default function SystemSettingsPage() {
                 </div>
                 {braveNeedsKey && (
                   <p className="text-xs text-amber-500">
-                    {t("Brave is selected but no key is configured — the search tool stays disabled until you save one.")}
+                    {t(
+                      "Brave is selected but no key is configured — the search tool stays disabled until you save one.",
+                    )}
                   </p>
                 )}
                 <p className="text-muted-foreground text-xs">
@@ -686,7 +769,9 @@ export default function SystemSettingsPage() {
                     id="tavily-key"
                     type="password"
                     autoComplete="off"
-                    placeholder={tavilyKeySet ? t("Configured (leave empty to keep)") : t("Enter Tavily API Key (tvly-…)")}
+                    placeholder={
+                      tavilyKeySet ? t("Configured (leave empty to keep)") : t("Enter Tavily API Key (tvly-…)")
+                    }
                     value={tavilyKeyInput}
                     disabled={!loaded || savingTavilyKey}
                     onChange={(e) => setTavilyKeyInput(e.target.value)}
@@ -701,10 +786,14 @@ export default function SystemSettingsPage() {
                 </div>
                 {webSearch && backend === "tavily" && !tavilyKeySet && (
                   <p className="text-xs text-amber-500">
-                    {t("Tavily is selected but no key is configured — the search tool stays disabled until you save one.")}
+                    {t(
+                      "Tavily is selected but no key is configured — the search tool stays disabled until you save one.",
+                    )}
                   </p>
                 )}
-                <p className="text-muted-foreground text-xs">{t("Register and get an API key at https://tavily.com.")}</p>
+                <p className="text-muted-foreground text-xs">
+                  {t("Register and get an API key at https://tavily.com.")}
+                </p>
               </div>
             )}
 

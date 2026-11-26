@@ -604,8 +604,9 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 				// ON CONFLICT DO NOTHING + the uq_task_scope unique index guarantee no
 				// duplicate additions; reruns/retries are idempotent no-ops as well.
 				// asset_ids can trace back to target content, so these auto rows count
-				// toward coverage only under a declared domain or IP root (db.declaredScopeFilter);
-				// coverage scope, not enforced.
+				// toward coverage only under a declared domain or IP root (db.declaredScopeFilter).
+				// Auto rows are coverage only: the target gate never treats them as the
+				// enforced boundary (only operator-set / goal-declared rows auto-allow).
 				// When the asset-coverage feature is off, the test scope (denominator) is no
 				// longer accumulated. A failed flag read is treated as on, so an outage
 				// still writes, including for a task whose stored flag is off.

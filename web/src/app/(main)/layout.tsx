@@ -3,8 +3,11 @@
 import type { ReactNode } from "react";
 import * as React from "react";
 
+import { usePathname } from "next/navigation";
+
 import { AppSidebar } from "@/app/(main)/_components/sidebar/app-sidebar";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { canAccess, type Role } from "@/lib/access";
 import { auth } from "@/lib/auth";
 import { getClientCookie } from "@/lib/cookie.client";
 import {
@@ -33,6 +36,17 @@ export default function Layout({ children }: Readonly<{ children: ReactNode }>) 
   // disables. No token → bounce to /login; render nothing until confirmed so no
   // protected UI (or its API calls) flashes for a logged-out visitor.
   const [authed, setAuthed] = React.useState(false);
+  const pathname = usePathname();
+  // Role-based page guard: a signed-in user who lands on a page their role
+  // cannot open (typed URL, stale link, bookmark) is sent back to the app home.
+  // The backend enforces the same boundary on every API call.
+  React.useEffect(() => {
+    if (!authed) return;
+    const user = auth.getCurrentUser();
+    if (user && !canAccess(user.role as Role, pathname)) {
+      window.location.replace("/function/tasks");
+    }
+  }, [authed, pathname]);
   React.useEffect(() => {
     if (auth.getToken()) {
       setAuthed(true);

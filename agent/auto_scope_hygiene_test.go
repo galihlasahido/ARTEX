@@ -9,9 +9,9 @@ import (
 	"github.com/Autumn-27/artex/db"
 )
 
-// TestTaskScopeLabelIsHonest pins the task_scope wording while the RoE is not
-// back: the tool text and the goals tail call it coverage scope, not enforced, and
-// no longer claim an authorization boundary.
+// TestTaskScopeLabelIsHonest pins the task_scope wording: the tool text and the
+// goals tail call it the coverage scope (now also the enforced boundary when the
+// task's target gate is on) and no longer claim an unconditional authorization boundary.
 func TestTaskScopeLabelIsHonest(t *testing.T) {
 	texts := map[string]string{
 		"add_task_scope": NewToolSet(nil, "").addTaskScope().Description(),

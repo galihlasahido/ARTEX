@@ -17,6 +17,7 @@ import { auth } from "@/lib/auth";
 
 export default function LoginPage() {
   const router = useRouter();
+  const [username, setUsername] = useState("ARTEX");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -69,7 +70,7 @@ export default function LoginPage() {
     setLoading(true);
     setError("");
     try {
-      const { token } = await api.login("ARTEX", password);
+      const { token } = await api.login(username.trim(), password);
       auth.setToken(token);
       window.location.replace("/function/tasks");
     } catch {
@@ -82,7 +83,11 @@ export default function LoginPage() {
   if (checking) {
     return (
       // Prerendered in the build-time locale; the reader's locale may differ for this brief state.
-      <div role="status" className="flex min-h-dvh items-center justify-center text-muted-foreground" suppressHydrationWarning>
+      <div
+        role="status"
+        className="flex min-h-dvh items-center justify-center text-muted-foreground"
+        suppressHydrationWarning
+      >
         {t("Checking login state…")}
       </div>
     );
@@ -119,7 +124,13 @@ export default function LoginPage() {
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <div className="space-y-1.5">
               <Label htmlFor="username">{t("Username")}</Label>
-              <Input id="username" value="ARTEX" readOnly className="bg-muted text-muted-foreground" />
+              <Input
+                id="username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder={t("Enter your username")}
+                autoComplete="username"
+              />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="password">{t("Password")}</Label>
@@ -169,7 +180,9 @@ export default function LoginPage() {
             <div className="space-y-0.5">
               <DialogTitle className="text-base">{t("ARTEX Terms of Use and Disclaimer")}</DialogTitle>
               <p className="text-xs text-muted-foreground">
-                {t("Version v1.1 · Effective 2026-10-11 · Please read all the following terms in full before signing in")}
+                {t(
+                  "Version v1.1 · Effective 2026-10-11 · Please read all the following terms in full before signing in",
+                )}
               </p>
             </div>
           </DialogHeader>

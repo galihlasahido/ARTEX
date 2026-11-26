@@ -1020,10 +1020,33 @@ export interface TrafficHost {
 }
 
 // ---- App settings (runtime toggles) ----
+// A login account beyond the bootstrap ARTEX admin. role gates page/API access.
+export interface User {
+  id: number;
+  username: string;
+  role: "admin" | "user";
+  active: boolean;
+  created_at: number; // unix seconds
+}
+
+// Fields an admin may change on an account; any subset.
+export interface UserPatch {
+  role?: "admin" | "user";
+  active?: boolean;
+  password?: string;
+}
+
+// The current session's own identity (GET /api/me).
+export interface Me {
+  username: string;
+  role: "admin" | "user";
+}
+
 export interface Settings {
   traffic_capture: boolean;
   agent_traffic_binding: boolean; // agents auto-bind traffic evidence, off by default; does not affect manual binding
   target_gate_default: boolean; // default target approval gate for new tasks (confines scanning to in-scope destinations); off by default
+  auto_approve_default: boolean; // default automatic-scan for new tasks (auto-approve tool-call asks; ask -> allow); off by default
   llm_record: boolean; // LLM recording switch (off by default); when off no LLM calls are recorded
   // Web search. brave_key_set / tavily_key_set / keenable_key_set reflect whether a key is stored
   // (the values are never returned). On PUT, send the corresponding field to set/clear.
@@ -1458,7 +1481,6 @@ export type TaskCredential = TaskCredentialInput & {
   created_at: string;
   updated_at: string;
 };
-
 
 export interface AssetInterceptRule {
   id: number;

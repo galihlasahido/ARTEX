@@ -384,7 +384,7 @@ func (t *ToolSet) insertAssets() actool.CoreTool {
 				// coverage and list_untested_assets only under a declared domain or IP
 				// root (a non-auto root_domain/subdomain/ip/cidr row: goal target,
 				// add_task_scope or manual scope, see db.declaredScopeFilter). task_scope is
-				// coverage scope, not enforced: nothing blocks a call outside it.
+				// coverage scope; the target gate enforces it on tool calls only when on.
 				// Independent of the coverage switch: task_scope is the task's range
 				// boundary (the filter basis for list/query); the coverage switch only
 				// decides whether to use it as the denominator for metrics, not whether
@@ -457,18 +457,19 @@ func (t *ToolSet) addCompanyScope() actool.CoreTool {
 	)
 }
 
-// taskScopeLabel is the honest description of task_scope while the RoE is not back:
-// it drives coverage and asset filters, and nothing enforces it on tool calls.
-const taskScopeLabel = "coverage scope, not enforced"
+// taskScopeLabel names task_scope in prompts: it is always the coverage/asset-filter
+// denominator, and, when the task's target gate is on, also the enforced boundary —
+// an in-scope target runs without approval, an out-of-scope one needs operator approval.
+const taskScopeLabel = "coverage scope"
 
 // addTaskScope lets the plan agent add test scope to THE CURRENT TASK — the coverage
-// denominator (coverage scope, not enforced). Worker discoveries are auto-scoped
+// denominator, and the enforced boundary when the task's target gate is on. Worker discoveries are auto-scoped
 // (precise host) by insertAssets; this tool is for DELIBERATELY WIDENING: pull a whole
 // root domain or whole company into scope, or add a specific subdomain / ip.
 func (t *ToolSet) addTaskScope() actool.CoreTool {
 	return writeTool(
 		"add_task_scope",
-		"Add test scope to [this task] — "+taskScopeLabel+": it is the denominator of asset test coverage; nothing blocks a tool call outside it.\n"+
+		"Add test scope to [this task] — "+taskScopeLabel+": the denominator of asset test coverage, and — when this task's target approval gate is on — the boundary that runs without approval (a target outside it needs operator approval; with the gate off, nothing blocks a call outside it).\n"+
 			"Supported kinds: company (all assets under the company) / root_domain (a whole root domain, including all subdomains) / subdomain (a single precise subdomain) / ip / cidr / icp / keyword.\n"+
 			"Note: hosts a worker touches one by one are [automatically] added to the scope by the system (precise subdomains), but they count toward coverage and list_untested_assets only under a declared domain or IP root (a root_domain/subdomain/ip/cidr goal target or scope added here or manually; a company/icp/keyword entry is not such a root); this tool is for [deliberate widening] — pulling in a whole root domain / whole company, or adding a specific subdomain/IP.\n"+
 			"value: for company pass the company name or id (the company must already exist); for root_domain/subdomain pass a domain; for ip/cidr pass an IP or range; for icp/keyword pass an ICP number or company keyword.\n"+
