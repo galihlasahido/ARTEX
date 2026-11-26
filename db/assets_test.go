@@ -814,6 +814,41 @@ func TestCountsByType(t *testing.T) {
 	}
 }
 
+// CountsByTypeForCompany must count only the company's assets, so the tab
+// badges match the company-scoped list (regression: badges once showed the
+// global totals while the list showed only the company's rows).
+func TestCountsByTypeForCompany(t *testing.T) {
+	d, av2, cs := testSetup(t)
+	defer d.Close()
+
+	companyID, _, err := cs.UpsertCompany("CountScopeCorp", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanupCompany(d, companyID)
+	cs.AddScope(companyID, []string{"countscope.example"}, "test")
+
+	// One domain inside the company's scope (auto-attributed), one outside it.
+	inID, err := av2.UpsertRootDomain(UpsertRootDomainReq{Domain: "countscope.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer deleteAsset(d, inID)
+	outID, err := av2.UpsertRootDomain(UpsertRootDomainReq{Domain: "unrelated-countscope.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer deleteAsset(d, outID)
+
+	counts, err := av2.CountsByTypeForCompany(companyID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts["root_domain"] != 1 {
+		t.Errorf("CountsByTypeForCompany: root_domain = %d, want 1 (only the in-scope domain)", counts["root_domain"])
+	}
+}
+
 // =====================================================================
 // Company attribution at insert time
 // =====================================================================

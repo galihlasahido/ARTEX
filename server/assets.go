@@ -429,11 +429,19 @@ func (s *Server) assetCounts(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 503, "database unavailable")
 		return
 	}
+	// Match listAssets' scoping so the tab badges agree with the rows shown:
+	// company_id (sidebar switcher) first, then task_id (task detail), else all.
+	q := r.URL.Query()
+	companyID, _ := strconv.ParseInt(q.Get("company_id"), 10, 64)
+	taskID, _ := strconv.ParseInt(q.Get("task_id"), 10, 64)
 	var counts map[string]int
 	var err error
-	if taskID, _ := strconv.ParseInt(r.URL.Query().Get("task_id"), 10, 64); taskID > 0 {
+	switch {
+	case companyID > 0:
+		counts, err = as.CountsByTypeForCompany(companyID)
+	case taskID > 0:
 		counts, err = as.CountsByTypeForTask(taskID)
-	} else {
+	default:
 		counts, err = as.CountsByType()
 	}
 	if err != nil {

@@ -558,8 +558,13 @@ export const api = {
     get<{ count: number; total: number; assets: Asset[] }>(
       `/assets?dsl=${encodeURIComponent(dsl)}${type ? `&type=${encodeURIComponent(type)}` : ""}&limit=${limit}&offset=${offset}${companyId ? `&company_id=${companyId}` : ""}`,
     ).then((r) => ({ assets: r?.assets ?? [], total: r?.total ?? r?.count ?? 0 })),
-  assetCounts: (taskId = "") =>
-    get<Record<string, number>>(`/assets/counts${taskId ? `?task_id=${encodeURIComponent(taskId)}` : ""}`),
+  assetCounts: (taskId = "", companyId = 0) => {
+    const p = new URLSearchParams();
+    if (taskId) p.set("task_id", taskId);
+    if (companyId > 0) p.set("company_id", String(companyId));
+    const qs = p.toString();
+    return get<Record<string, number>>(`/assets/counts${qs ? `?${qs}` : ""}`);
+  },
   deleteAssets: (ids: number[]) =>
     http<{ deleted: number }>("/assets", { method: "DELETE", body: JSON.stringify({ ids }) }),
   // task-scoped view of the same endpoint — server-side paginated like `assets`

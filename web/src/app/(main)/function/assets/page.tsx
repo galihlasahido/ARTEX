@@ -58,13 +58,13 @@ import {
 } from "@/components/ui/sheet";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { t } from "@/i18n";
 import { api } from "@/lib/api";
 import { parseCompanyScopeText } from "@/lib/company-scope";
 import { httpHref } from "@/lib/http-href";
 import type { Asset, Company, CompanyScopeRule } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useActiveCompanyID } from "@/stores/company/company-store";
-import { t } from "@/i18n";
 
 const METHOD_COLOR: Record<string, string> = {
   GET: "bg-emerald-100 text-emerald-700",
@@ -147,13 +147,15 @@ export default function AssetsPage() {
       .catch(() => {
         /* Keep the last successful company snapshot on a transient failure. */
       });
+    // Scope the badge counts to the active company so they match the list,
+    // which the sidebar switcher also narrows (companyId 0 = all companies).
     api
-      .assetCounts()
+      .assetCounts("", companyId ?? 0)
       .then(setCounts)
       .catch(() => {
         /* Keep the last successful counters on a transient failure. */
       });
-  }, []);
+  }, [companyId]);
 
   // Manual refresh: reload counts/companies and re-fetch the current page.
   const refresh = React.useCallback(() => {

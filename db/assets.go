@@ -1231,6 +1231,19 @@ func (s *AssetStore) CountsByTypeForTask(taskID int64) (map[string]int, error) {
 	return scanTypeCounts(rows)
 }
 
+// CountsByTypeForCompany returns per-type counts for one company, so the tab
+// badges match the company-scoped list (ListByCompany/CountByCompany). Without
+// this, the badges show the global totals while the list shows only the
+// company's assets.
+func (s *AssetStore) CountsByTypeForCompany(companyID int64) (map[string]int, error) {
+	rows, err := s.db.Query(`SELECT type, COUNT(*) FROM assets WHERE company_id = $1 GROUP BY type`, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanTypeCounts(rows)
+}
+
 // DeleteByTaskID removes assets owned only by taskID and detaches taskID from
 // assets shared with other tasks. Full task deletion uses the coordinated
 // transaction in DeleteTaskCascadePrepared; this method remains for callers
