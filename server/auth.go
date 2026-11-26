@@ -668,6 +668,10 @@ func (s *Server) authChangePassword(w http.ResponseWriter, r *http.Request) {
 // pwd_version invalidates the caller's other live sessions; this response has no
 // replacement token, so the frontend re-logs in (matching the ARTEX path).
 func (s *Server) changeUserPassword(w http.ResponseWriter, r *http.Request, username, oldPassword, newPassword string) {
+	if msg := validateComplexPassword(newPassword); msg != "" {
+		writeErr(w, 400, msg)
+		return
+	}
 	u, err := s.m.pg.Users().GetByName(username)
 	if err == db.ErrUserNotFound {
 		writeErr(w, 401, "Unauthorized")

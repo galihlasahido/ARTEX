@@ -6,11 +6,40 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/Autumn-27/artex/db"
 )
+
+// validateComplexPassword extends validatePassword (length bounds) with a
+// complexity rule for user accounts, applied when a password is set on create,
+// on an admin reset, or when a user changes their own: at least one lowercase
+// letter, one uppercase letter, one digit, and one symbol. Returns "" when ok,
+// otherwise a reason to show.
+func validateComplexPassword(pw string) string {
+	if msg := validatePassword(pw); msg != "" {
+		return msg
+	}
+	var lower, upper, digit, symbol bool
+	for _, r := range pw {
+		switch {
+		case unicode.IsLower(r):
+			lower = true
+		case unicode.IsUpper(r):
+			upper = true
+		case unicode.IsDigit(r):
+			digit = true
+		default:
+			symbol = true
+		}
+	}
+	if !lower || !upper || !digit || !symbol {
+		return "Password must include an uppercase letter, a lowercase letter, a digit, and a symbol"
+	}
+	return ""
+}
 
 // Roles and the bootstrap admin. "ARTEX" is the permanent super-admin whose
 // password lives in settings (see auth.go); every other account is a row in the
@@ -259,7 +288,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "Role must be 'admin' or 'user'")
 		return
 	}
-	if msg := validatePassword(req.Password); msg != "" {
+	if msg := validateComplexPassword(req.Password); msg != "" {
 		writeErr(w, 400, msg)
 		return
 	}
@@ -319,7 +348,7 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.Password != nil {
-		if msg := validatePassword(*req.Password); msg != "" {
+		if msg := validateComplexPassword(*req.Password); msg != "" {
 			writeErr(w, 400, msg)
 			return
 		}

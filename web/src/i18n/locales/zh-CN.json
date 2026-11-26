@@ -2770,5 +2770,6 @@
   "User deleted": "用户已删除",
   "User Management": "用户管理",
   "User updated": "用户已更新",
-  "User": "普通用户"
+  "User": "普通用户",
+  "At least 12 characters, with an uppercase letter, a lowercase letter, a digit, and a symbol.": "至少 12 个字符，并包含大写字母、小写字母、数字和符号。"
 }

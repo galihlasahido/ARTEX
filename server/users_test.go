@@ -44,7 +44,7 @@ func createTestUser(t *testing.T, g *gateServer, role string) (id int64, usernam
 	t.Helper()
 	username = fmt.Sprintf("u%d", time.Now().UnixNano())
 	code, body := g.do(t, "POST", "/api/users",
-		fmt.Sprintf(`{"username":%q,"password":"correct-horse-1","role":%q}`, username, role))
+		fmt.Sprintf(`{"username":%q,"password":"Correct-horse-1","role":%q}`, username, role))
 	if code != 201 {
 		t.Fatalf("create %s: %d %v", username, code, body)
 	}
@@ -73,7 +73,7 @@ func TestUserManagementRequiresAdmin(t *testing.T) {
 		method, path, body string
 	}{
 		{"GET", "/api/users", ""},
-		{"POST", "/api/users", `{"username":"zzz","password":"correct-horse-1","role":"user"}`},
+		{"POST", "/api/users", `{"username":"zzz","password":"Correct-horse-1","role":"user"}`},
 		{"PATCH", fmt.Sprintf("/api/users/%d", id), `{"role":"admin"}`},
 		{"DELETE", fmt.Sprintf("/api/users/%d", id), ""},
 	} {
@@ -164,10 +164,11 @@ func TestCreateUserValidation(t *testing.T) {
 		name, body string
 		want       int
 	}{
-		{"reserved", `{"username":"ARTEX","password":"correct-horse-1","role":"admin"}`, 400},
+		{"reserved", `{"username":"ARTEX","password":"Correct-horse-1","role":"admin"}`, 400},
 		{"short password", `{"username":"shortpw","password":"abc","role":"user"}`, 400},
-		{"bad role", `{"username":"badrole","password":"correct-horse-1","role":"root"}`, 400},
-		{"duplicate", fmt.Sprintf(`{"username":%q,"password":"correct-horse-1","role":"user"}`, uname), 409},
+		{"not complex", `{"username":"weakcx","password":"alllowercaseword","role":"user"}`, 400},
+		{"bad role", `{"username":"badrole","password":"Correct-horse-1","role":"root"}`, 400},
+		{"duplicate", fmt.Sprintf(`{"username":%q,"password":"Correct-horse-1","role":"user"}`, uname), 409},
 	} {
 		if code, body := g.do(t, "POST", "/api/users", c.body); code != c.want {
 			t.Fatalf("%s: %d %v, want %d", c.name, code, body, c.want)
@@ -181,7 +182,7 @@ func TestChangeOwnPasswordInvalidatesOldToken(t *testing.T) {
 	tok := userToken(t, g, uname, roleUser, 1)
 
 	if code, _ := g.doAs(t, tok, "POST", "/api/auth/change-password",
-		`{"old_password":"correct-horse-1","new_password":"correct-horse-2"}`); code != 200 {
+		`{"old_password":"Correct-horse-1","new_password":"Correct-horse-2"}`); code != 200 {
 		t.Fatalf("change own password = %d, want 200", code)
 	}
 	// The old session (version 1) is dead; version 2 token is valid.
@@ -193,7 +194,7 @@ func TestChangeOwnPasswordInvalidatesOldToken(t *testing.T) {
 	}
 	// Login with the new password works; the old one does not.
 	if code, body := g.doAs(t, "", "POST", "/api/auth/login",
-		fmt.Sprintf(`{"username":%q,"password":"correct-horse-2"}`, uname)); code != 200 || body["token"] == nil {
+		fmt.Sprintf(`{"username":%q,"password":"Correct-horse-2"}`, uname)); code != 200 || body["token"] == nil {
 		t.Fatalf("login with new password = %d %v", code, body)
 	}
 }

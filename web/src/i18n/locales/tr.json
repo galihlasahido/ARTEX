@@ -2770,5 +2770,6 @@
   "User deleted": "Pengguna dihapus",
   "User Management": "Manajemen Pengguna",
   "User updated": "Pengguna diperbarui",
-  "User": "Pengguna"
+  "User": "Pengguna",
+  "At least 12 characters, with an uppercase letter, a lowercase letter, a digit, and a symbol.": "Minimal 12 karakter, dengan huruf besar, huruf kecil, angka, dan simbol."
 }

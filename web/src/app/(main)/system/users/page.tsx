@@ -49,6 +49,15 @@ function errMessage(e: unknown, fallback: string): string {
   return e instanceof ApiError && e.message ? e.message : fallback;
 }
 
+// The password rule shown and checked in the dialogs. It mirrors the backend
+// (server validateComplexPassword); the server is authoritative.
+const PASSWORD_RULE = "At least 12 characters, with an uppercase letter, a lowercase letter, a digit, and a symbol.";
+
+// passwordInvalid reports whether pw fails the complexity rule.
+function passwordInvalid(pw: string): boolean {
+  return pw.length < 12 || !/[a-z]/.test(pw) || !/[A-Z]/.test(pw) || !/[0-9]/.test(pw) || !/[^A-Za-z0-9]/.test(pw);
+}
+
 export default function UserManagementPage() {
   const [users, setUsers] = React.useState<User[]>([]);
   const [loaded, setLoaded] = React.useState(false);
@@ -282,7 +291,11 @@ function CreateUserDialog({
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="new-password"
             />
-            <p className="text-muted-foreground text-xs">{t("At least 12 characters.")}</p>
+            <p
+              className={`text-xs ${password !== "" && passwordInvalid(password) ? "text-destructive" : "text-muted-foreground"}`}
+            >
+              {t(PASSWORD_RULE)}
+            </p>
           </div>
           <div className="space-y-1.5">
             <Label>{t("Role")}</Label>
@@ -301,7 +314,7 @@ function CreateUserDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {t("Cancel")}
           </Button>
-          <Button onClick={submit} disabled={saving || username.trim() === "" || password === ""}>
+          <Button onClick={submit} disabled={saving || username.trim() === "" || passwordInvalid(password)}>
             {t("Create")}
           </Button>
         </DialogFooter>
@@ -350,13 +363,17 @@ function ResetPasswordDialog({ user, onClose }: { user: User | null; onClose: ()
             onChange={(e) => setPassword(e.target.value)}
             autoComplete="new-password"
           />
-          <p className="text-muted-foreground text-xs">{t("At least 12 characters.")}</p>
+          <p
+            className={`text-xs ${password !== "" && passwordInvalid(password) ? "text-destructive" : "text-muted-foreground"}`}
+          >
+            {t(PASSWORD_RULE)}
+          </p>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
             {t("Cancel")}
           </Button>
-          <Button onClick={submit} disabled={saving || password === ""}>
+          <Button onClick={submit} disabled={saving || passwordInvalid(password)}>
             {t("Save")}
           </Button>
         </DialogFooter>
