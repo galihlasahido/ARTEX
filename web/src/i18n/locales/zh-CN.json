@@ -2820,7 +2820,6 @@
   "Assign users to a group; every member can access the tasks placed in that group.": "将用户分配到组；每位成员都能访问放入该组的任务。",
   "Development only — do not use in production.": "仅用于开发 — 请勿在生产环境使用。",
   "Direct bind: users sign in with their LDAP username and password; no service account is needed.": "直接绑定：用户使用其 LDAP 用户名和密码登录；无需服务账户。",
-  "e.g. Bank Aceh team": "例如：Bank Aceh 团队",
   "Enable LDAP login": "启用 LDAP 登录",
   "LDAP Login": "LDAP 登录",
   "Local accounts keep working; LDAP is tried when a local login fails.": "本地账户仍可用；本地登录失败时才尝试 LDAP。",
@@ -2837,5 +2836,6 @@
   "User DN pattern": "用户 DN 模板",
   "Members of this group can access the task.": "该组的成员可以访问此任务。",
   "Task created, but could not set its group.": "任务已创建，但无法设置其分组。",
-  "Task group (optional)": "任务组（可选）"
+  "Task group (optional)": "任务组（可选）",
+  "e.g. Pentest team A": "例如：渗透测试 A 组"
 }

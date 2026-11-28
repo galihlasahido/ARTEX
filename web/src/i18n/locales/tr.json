@@ -2820,7 +2820,6 @@
   "Assign users to a group; every member can access the tasks placed in that group.": "Tetapkan user ke grup; setiap anggota bisa mengakses task yang ditaruh di grup itu.",
   "Development only — do not use in production.": "Hanya untuk pengembangan — jangan dipakai di produksi.",
   "Direct bind: users sign in with their LDAP username and password; no service account is needed.": "Direct bind: user login dengan username & password LDAP mereka; tak perlu service account.",
-  "e.g. Bank Aceh team": "mis. Tim Bank Aceh",
   "Enable LDAP login": "Aktifkan login LDAP",
   "LDAP Login": "Login LDAP",
   "Local accounts keep working; LDAP is tried when a local login fails.": "Akun lokal tetap berfungsi; LDAP dicoba saat login lokal gagal.",
@@ -2837,5 +2836,6 @@
   "User DN pattern": "Pola DN User",
   "Members of this group can access the task.": "Anggota grup ini bisa mengakses task tersebut.",
   "Task created, but could not set its group.": "Task dibuat, tapi grupnya gagal diset.",
-  "Task group (optional)": "Task group (opsional)"
+  "Task group (optional)": "Task group (opsional)",
+  "e.g. Pentest team A": "mis. Tim Pentest A"
 }

@@ -64,7 +64,7 @@ export default function TaskGroupsPage() {
           <Input
             id="new-group"
             value={name}
-            placeholder={t("e.g. Bank Aceh team")}
+            placeholder={t("e.g. Pentest team A")}
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && create()}
           />
