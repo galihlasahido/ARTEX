@@ -26,9 +26,11 @@ MobSF. Design and rationale: `docs/mobile-apk-pentest.md`.
 
 ## Inputs
 
-The APK sits in the task workspace (uploaded via `POST /api/tasks/{id}/apk` or
-dropped in). Resolve its path first (`ls` the workspace). The app becomes an
-`app` asset keyed by its manifest package (bundle id).
+The APK is uploaded into the task via the normal attachment upload
+(`POST /api/chat/upload?scope=task&id=<task id>`), so it lands in the agent's
+CWD under `uploads/`. Find it first with `ls uploads/*.apk` (fall back to a
+recursive `find . -name '*.apk'`). The app becomes an `app` asset keyed by its
+manifest package (bundle id).
 
 ## Phase 1 — Static analysis (always; offline)
 
