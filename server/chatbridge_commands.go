@@ -49,6 +49,9 @@ func (s *Server) chatBridgeHandlers(kind string) ([]chatbridge.Command, chatbrid
 		chatbridge.Command{Name: "pause", Usage: "[id]", Summary: "pause the task", Run: s.bridgePause},
 		chatbridge.Command{Name: "resume", Usage: "[id]", Summary: "resume the task", Run: s.bridgeResume},
 		chatbridge.Command{Name: "findings", Usage: "[id]", Summary: "the task's findings, most severe first", Run: s.bridgeFindings},
+		chatbridge.Command{Name: "approvals", Summary: "pending gate approvals", Run: s.bridgeApprovals},
+		chatbridge.Command{Name: "approve", Usage: "<id>", Summary: "allow a pending request", Run: s.bridgeApprove},
+		chatbridge.Command{Name: "deny", Usage: "<id>", Summary: "deny a pending request", Run: s.bridgeDeny},
 	)
 	return cmds, s.bridgeText
 }
