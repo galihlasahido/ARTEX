@@ -26,6 +26,26 @@ func TestTaskIDFromPath(t *testing.T) {
 	}
 }
 
+func TestFindingIDFromPath(t *testing.T) {
+	cases := map[string]int64{
+		"/api/exploration/findings/42":             42,
+		"/api/exploration/findings/42/lineage":     42,
+		"/api/exploration/findings":                0,
+		"/api/exploration/findings/groups":         0,
+		"/api/exploration/findings/stats":          0,
+		"/api/exploration/findings/asset-tree":     0,
+		"/api/exploration/findings/export":         0,
+		"/api/exploration/findings/bulk-status":    0,
+		"/api/exploration/findings/retests/active": 0,
+		"/api/tasks/8":                             0,
+	}
+	for path, want := range cases {
+		if got := findingIDFromPath(path); got != want {
+			t.Errorf("findingIDFromPath(%q) = %d, want %d", path, got, want)
+		}
+	}
+}
+
 func TestCanAccessTaskOwner(t *testing.T) {
 	s := &Server{} // group branch is not exercised (GroupID nil), so no Manager needed
 	task := &Task{Owner: "alice", GroupID: nil}

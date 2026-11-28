@@ -122,6 +122,27 @@ func (d *DB) IsTaskGroupMember(groupID int64, username string) (bool, error) {
 	return err == nil, err
 }
 
+// GroupsForUser returns the ids of the task groups username belongs to.
+func (d *DB) GroupsForUser(username string) ([]int64, error) {
+	if username == "" {
+		return nil, nil
+	}
+	rows, err := d.Query(`SELECT group_id FROM task_group_members WHERE lower(username)=lower($1)`, username)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // SetTaskGroup assigns (groupID != nil) or clears (nil) a task's group.
 func (d *DB) SetTaskGroup(taskID int64, groupID *int64) error {
 	_, err := d.Exec(`UPDATE tasks SET group_id=$2, updated_at=now() WHERE id=$1 AND deleted_at IS NULL`, taskID, groupID)

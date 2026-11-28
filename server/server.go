@@ -1135,7 +1135,7 @@ func (s *Server) Handler() http.Handler {
 	// /api/* goes through CORS + JWT; everything else is served by the embedded
 	// frontend (public — auth is enforced client-side and on the API). With the
 	// no-embed build the webui handler just 404s (run `next dev` separately).
-	api := cors(s.requireAuth(s.taskGate(s.adminGate(mux))))
+	api := cors(s.requireAuth(s.taskGate(s.findingGate(s.adminGate(mux)))))
 	root := http.NewServeMux()
 	root.Handle("/api/", api)
 	webui := s.webuiHandler()
@@ -2379,8 +2379,10 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 		// With page/limit → server-side pagination {items,total,...}; without → a bare array (for dashboard aggregation,
 		// same compat policy as the intents endpoint). Filtering/sorting is pushed down to SQL uniformly, and the bare
 		// array honours the filters too: the dashboard narrows by the active company through asset_scope.
+		filter := findingFilterFromQuery(q)
+		s.restrictFindingFilter(r, &filter) // a 'user' sees only its own / group findings
 		if q.Get("page") == "" && q.Get("limit") == "" {
-			fs, _ := s.m.pg.ListFindingsFiltered(findingFilterFromQuery(q), 500)
+			fs, _ := s.m.pg.ListFindingsFiltered(filter, 500)
 			assets := s.resolveFindingAssets(fs)
 			out := make([]FindingDTO, 0, len(fs))
 			for _, f := range fs {
@@ -2391,7 +2393,7 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 		}
 		page := findingPaginationParam(q.Get("page"), 1, 0)
 		limit := findingPaginationParam(q.Get("limit"), 20, 200)
-		fs, total, err := s.m.pg.ListFindingsPage(findingFilterFromQuery(q), page, limit)
+		fs, total, err := s.m.pg.ListFindingsPage(filter, page, limit)
 		if err != nil {
 			writeErr(w, 500, err.Error())
 			return
@@ -2407,6 +2409,10 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 	t := s.m.ResolveTask(taskParam)
 	if t == nil {
 		writeJSON(w, 200, []any{})
+		return
+	}
+	if p, ok := identityFrom(r.Context()); ok && !s.canAccessTask(p, t) {
+		writeJSON(w, 200, []any{}) // a 'user' cannot read another's task findings
 		return
 	}
 	f, err := t.Store.ListByKind(db.KindFinding, 200)
@@ -2508,8 +2514,11 @@ func (s *Server) resolveAssetIDs(ids []int64) map[int64]*db.Asset {
 // findingStats serves the whole-table aggregates (stat cards + vuln-class filter)
 // for the paginated Findings page.
 func (s *Server) findingStats(w http.ResponseWriter, r *http.Request) {
-	// company narrows the cards to the sidebar's company, with the list's rule.
-	st, err := s.m.pg.FindingStatsForCompany(r.URL.Query().Get("company"))
+	// company narrows the cards to the sidebar's company, with the list's rule;
+	// a 'user' also sees only its own / group findings.
+	f := db.FindingFilter{Company: r.URL.Query().Get("company")}
+	s.restrictFindingFilter(r, &f)
+	st, err := s.m.pg.FindingStatsForCompany(f)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -2594,6 +2603,7 @@ func (s *Server) findingsExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.restrictFindingFilter(r, &filter) // a 'user' exports only its own / group findings (all scopes)
 	fs, err := s.m.pg.ListFindingsForExport(filter, ids)
 	if err != nil {
 		writeErr(w, 500, err.Error())
@@ -2845,7 +2855,7 @@ func (s *Server) bulkPatchFindingStatus(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, 400, "bad status: "+body.Status)
 		return
 	}
-	ids := normalizeFindingIDs(body.IDs, maxBulkFindingStatus)
+	ids := s.accessibleFindingIDs(r, normalizeFindingIDs(body.IDs, maxBulkFindingStatus))
 	if len(ids) == 0 {
 		writeErr(w, 400, "no finding ids")
 		return
@@ -2900,7 +2910,7 @@ func (s *Server) bulkPatchFindingReportState(w http.ResponseWriter, r *http.Requ
 		writeErr(w, 400, "bad report_state: "+body.ReportState)
 		return
 	}
-	ids := normalizeFindingIDs(body.IDs, maxBulkFindingStatus)
+	ids := s.accessibleFindingIDs(r, normalizeFindingIDs(body.IDs, maxBulkFindingStatus))
 	if len(ids) == 0 {
 		writeErr(w, 400, "no finding ids")
 		return

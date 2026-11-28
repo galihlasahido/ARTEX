@@ -385,14 +385,14 @@ func TestFindingCompanyScopeFilter(t *testing.T) {
 	}
 
 	// The stat cards count with the same rule as the list.
-	st, err := d.FindingStatsForCompany(idB)
+	st, err := d.FindingStatsForCompany(FindingFilter{Company: idB})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if st.Total != 3 || st.High != 3 || len(st.Tasks) != 1 || st.Tasks[0].ID != taskB {
 		t.Fatalf("stats under B: want 3 high findings of task %d, got %+v", taskB, st)
 	}
-	if st, err := d.FindingStatsForCompany("999000444"); err != nil || st.Total != 0 {
+	if st, err := d.FindingStatsForCompany(FindingFilter{Company: "999000444"}); err != nil || st.Total != 0 {
 		t.Fatalf("stats under a nonexistent company: want 0, got %+v err=%v", st, err)
 	}
 }

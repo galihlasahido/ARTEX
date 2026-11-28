@@ -201,6 +201,13 @@ type FindingFilter struct {
 	// Empty = do not filter by company. An AssetScope of c:<id> means the same.
 	Company string
 
+	// Per-user access restriction (empty = no restriction, for an admin). When
+	// RestrictOwner is set, only findings whose task is owned by that user or
+	// belongs to one of RestrictGroupIDs are returned; findings with no task are
+	// excluded. Set by the server from the caller's role; not from the query.
+	RestrictOwner    string
+	RestrictGroupIDs []int64
+
 	// The three below are resolved from AssetScope by applyAssetScope; callers
 	// do not set them.
 	assetIDs  []int64 // all asset ids in the subtree
@@ -243,6 +250,22 @@ func (f FindingFilter) where() (string, []any) {
 	} else if tid, err := strconv.ParseInt(f.TaskID, 10, 64); err == nil && tid > 0 {
 		args = append(args, tid)
 		conds = append(conds, fmt.Sprintf("f.task_id = $%d", len(args)))
+	}
+	// Per-user access: a non-admin caller sees only findings whose task it owns
+	// or that is in one of its groups. Group ids come from the DB (trusted
+	// int64), so they are formatted inline. A finding with no task has a NULL
+	// owner and is excluded.
+	if f.RestrictOwner != "" {
+		args = append(args, f.RestrictOwner)
+		cond := fmt.Sprintf("lower(t.owner) = lower($%d)", len(args))
+		if len(f.RestrictGroupIDs) > 0 {
+			ids := make([]string, len(f.RestrictGroupIDs))
+			for i, g := range f.RestrictGroupIDs {
+				ids[i] = strconv.FormatInt(g, 10)
+			}
+			cond = fmt.Sprintf("(%s OR t.group_id IN (%s))", cond, strings.Join(ids, ","))
+		}
+		conds = append(conds, cond)
 	}
 	// Asset filter: asset_ids is a jsonb array; @> ANY(...) can use
 	// idx_findings_asset_ids.
@@ -578,6 +601,59 @@ RETURNING id, created_at`, s.expID, audit.NodeID, utf8Clean(audit.Worker), utf8C
 // ignoring filter; when ids is empty it exports by filter (the current
 // filter/everything). The result is ordered by severity descending, then time
 // descending, matching the grouping order of the "export summary report".
+// FindingTaskID returns the task a finding belongs to (nil = none) and whether
+// the finding exists, for the per-user access gate.
+// FilterAccessibleFindingIDs returns the subset of ids whose finding belongs to
+// a task owned by owner or in one of groupIDs. ids come from a request body, so
+// they are bound as parameters; groupIDs come from the DB and are inlined.
+func (d *DB) FilterAccessibleFindingIDs(ids []int64, owner string, groupIDs []int64) ([]int64, error) {
+	if len(ids) == 0 || owner == "" {
+		return ids, nil
+	}
+	ph := make([]string, len(ids))
+	args := make([]any, 0, len(ids)+1)
+	for i, id := range ids {
+		ph[i] = fmt.Sprintf("$%d", i+1)
+		args = append(args, id)
+	}
+	args = append(args, owner)
+	cond := fmt.Sprintf("lower(t.owner) = lower($%d)", len(args))
+	if len(groupIDs) > 0 {
+		gs := make([]string, len(groupIDs))
+		for i, g := range groupIDs {
+			gs[i] = strconv.FormatInt(g, 10)
+		}
+		cond = fmt.Sprintf("(%s OR t.group_id IN (%s))", cond, strings.Join(gs, ","))
+	}
+	q := fmt.Sprintf(`SELECT f.id FROM findings f LEFT JOIN tasks t ON f.task_id=t.id
+		WHERE f.id IN (%s) AND %s`, strings.Join(ph, ","), cond)
+	rows, err := d.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]int64, 0, len(ids))
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+func (d *DB) FindingTaskID(id int64) (taskID *int64, found bool, err error) {
+	err = d.QueryRow(`SELECT task_id FROM findings WHERE id=$1`, id).Scan(&taskID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return taskID, true, nil
+}
+
 func (d *DB) ListFindingsForExport(f FindingFilter, ids []int64) ([]*DBFinding, error) {
 	const order = `ORDER BY CASE f.severity WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END DESC, f.created_at DESC`
 	cols := findingSelectCols + `, COALESCE(f.report, '')`
@@ -590,10 +666,25 @@ func (d *DB) ListFindingsForExport(f FindingFilter, ids []int64) ([]*DBFinding, 
 			ph[i] = fmt.Sprintf("$%d", i+1)
 			args = append(args, id)
 		}
+		where := `WHERE f.id IN (` + strings.Join(ph, ",") + `)`
+		// Per-user access: even an explicit id list is narrowed to the caller's
+		// own / group findings (mirrors FindingFilter.where()).
+		if f.RestrictOwner != "" {
+			args = append(args, f.RestrictOwner)
+			cond := fmt.Sprintf("lower(t.owner) = lower($%d)", len(args))
+			if len(f.RestrictGroupIDs) > 0 {
+				gids := make([]string, len(f.RestrictGroupIDs))
+				for i, g := range f.RestrictGroupIDs {
+					gids[i] = strconv.FormatInt(g, 10)
+				}
+				cond = fmt.Sprintf("(%s OR t.group_id IN (%s))", cond, strings.Join(gids, ","))
+			}
+			where += " AND " + cond
+		}
 		q = `SELECT ` + cols + `
 			FROM findings f
 			LEFT JOIN tasks t ON f.task_id = t.id
-			WHERE f.id IN (` + strings.Join(ph, ",") + `)
+			` + where + `
 			` + order
 	} else {
 		scoped, err := d.applyAssetScope(f)
@@ -659,16 +750,16 @@ type FindingTaskOption struct {
 // FindingStats returns whole-table counts (by severity, pending, and report
 // stage) and the sorted set of distinct vuln classes.
 func (d *DB) FindingStats() (*FindingStats, error) {
-	return d.FindingStatsForCompany("")
+	return d.FindingStatsForCompany(FindingFilter{})
 }
 
 // FindingStatsForCompany is FindingStats narrowed by the Company rule of
 // FindingFilter, so the stat cards count the same findings as the list. Empty
 // company = whole table. A company view leaves out archived (cold) tasks: their
 // aggregates carry no asset or company attribution.
-func (d *DB) FindingStatsForCompany(company string) (*FindingStats, error) {
+func (d *DB) FindingStatsForCompany(filter FindingFilter) (*FindingStats, error) {
 	st := &FindingStats{VulnClasses: []string{}, Tasks: []FindingTaskOption{}}
-	f, err := d.resolveCompany(FindingFilter{Company: company})
+	f, err := d.resolveCompany(filter)
 	if err != nil {
 		return nil, err
 	}
@@ -726,7 +817,7 @@ func (d *DB) FindingStatsForCompany(company string) (*FindingStats, error) {
 	if err := trows.Err(); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(company) != "" {
+	if strings.TrimSpace(filter.Company) != "" {
 		return st, nil
 	}
 	archived, err := d.archivedTaskAggregates()

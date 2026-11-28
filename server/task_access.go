@@ -2,7 +2,10 @@ package server
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
+
+	"github.com/Autumn-27/artex/db"
 )
 
 // Per-user task access. A task records its owner (the username that created it).
@@ -83,6 +86,53 @@ func (s *Server) taskGate(next http.Handler) http.Handler {
 	})
 }
 
+// findingGate refuses a non-admin caller access to a single finding whose task
+// it may not see, on every /api/exploration/findings/{id}... route. The
+// collection routes (groups, stats, asset-tree, export, bulk-*) pass through:
+// they are already narrowed by restrictFindingFilter.
+func (s *Server) findingGate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := findingIDFromPath(r.URL.Path)
+		if id == 0 {
+			next.ServeHTTP(w, r)
+			return
+		}
+		p, ok := identityFrom(r.Context())
+		if !ok || p.admin() {
+			next.ServeHTTP(w, r)
+			return
+		}
+		taskID, found, err := s.m.PG().FindingTaskID(id)
+		if err != nil || !found {
+			next.ServeHTTP(w, r) // let the handler answer (404/500)
+			return
+		}
+		if !s.canAccessFindingTask(r, taskID) {
+			writeErr(w, 403, "you do not have access to this finding")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// findingIDFromPath returns the numeric finding id in
+// /api/exploration/findings/{id}... or 0 for a collection route.
+func findingIDFromPath(path string) int64 {
+	const pfx = "/api/exploration/findings/"
+	if !strings.HasPrefix(path, pfx) {
+		return 0
+	}
+	seg := path[len(pfx):]
+	if i := strings.IndexByte(seg, '/'); i >= 0 {
+		seg = seg[:i]
+	}
+	n, err := strconv.ParseInt(seg, 10, 64)
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
+}
+
 // taskIDFromPath returns the numeric task id in /api/tasks/{id}... or "" when
 // the path is not a per-task route (a collection verb like "category" or
 // "control" is not an id).
@@ -112,6 +162,52 @@ func taskIDFromPath(path string) string {
 func (s *Server) deniesTask(r *http.Request, t *Task) bool {
 	p, ok := identityFrom(r.Context())
 	return ok && !s.canAccessTask(p, t)
+}
+
+// restrictFindingFilter narrows a findings query to the caller's own / group
+// tasks when the caller is not an admin. Findings live under /api/exploration,
+// outside taskGate, so each findings handler must call this.
+func (s *Server) restrictFindingFilter(r *http.Request, f *db.FindingFilter) {
+	p, ok := identityFrom(r.Context())
+	if !ok || p.admin() {
+		return
+	}
+	f.RestrictOwner = p.username
+	if gids, err := s.m.PG().GroupsForUser(p.username); err == nil {
+		f.RestrictGroupIDs = gids
+	}
+}
+
+// canAccessFindingTask reports whether the caller may see a finding that belongs
+// to task taskID (nil = no task → admin-only). Admin sees all.
+func (s *Server) canAccessFindingTask(r *http.Request, taskID *int64) bool {
+	p, ok := identityFrom(r.Context())
+	if !ok || p.admin() {
+		return true
+	}
+	if taskID == nil {
+		return false // a finding with no task is not owned by any user
+	}
+	t, found := s.m.Task(strconv.FormatInt(*taskID, 10))
+	if !found {
+		return false
+	}
+	return s.canAccessTask(p, t)
+}
+
+// accessibleFindingIDs narrows a list of finding ids (from a bulk request body)
+// to those the caller may act on. Admin keeps all.
+func (s *Server) accessibleFindingIDs(r *http.Request, ids []int64) []int64 {
+	p, ok := identityFrom(r.Context())
+	if !ok || p.admin() {
+		return ids
+	}
+	gids, _ := s.m.PG().GroupsForUser(p.username)
+	out, err := s.m.PG().FilterAccessibleFindingIDs(ids, p.username, gids)
+	if err != nil {
+		return nil // fail closed
+	}
+	return out
 }
 
 // accessibleTasks filters a task list to those the principal may access.
