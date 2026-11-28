@@ -1920,6 +1920,7 @@ export interface ChatBridge {
   // Masked: credential fields come back as "__masked__…"; sending them back unchanged keeps the stored value.
   config: Record<string, unknown>;
   allowed_chats: string[];
+  allowed_users: string[];
   secret_keys: string[];
   status: ChatBridgeStatus;
   updated_at?: string;

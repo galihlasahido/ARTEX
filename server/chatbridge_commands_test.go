@@ -2,216 +2,216 @@ package server
 
 import (
 	"context"
+	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/chatbridge"
 	"github.com/Autumn-27/artex/db"
-	"github.com/Autumn-27/artex/intercept"
 )
 
-// fakeConsole is a chatConsole for the command-table tests: no PG, no engine.
-type fakeConsole struct {
-	tasks       []consoleTask
-	taskByID    map[string]consoleTask
-	pending     []consolePending
-	pendingByID map[int64]consolePending
-	listErr     error
-	controlStat string
-	controlErr  error
-	decideErr   error
-
-	lastControlID, lastControlAction string
-	lastDecideID                     int64
-	lastDecideAllow                  bool
-	lastDecideApprover               string
-}
-
-func (f *fakeConsole) consoleListTasks() []consoleTask { return f.tasks }
-func (f *fakeConsole) consoleGetTask(id string) (consoleTask, bool) {
-	t, ok := f.taskByID[id]
-	return t, ok
-}
-func (f *fakeConsole) consoleControlTask(id, action string) (string, error) {
-	f.lastControlID, f.lastControlAction = id, action
-	return f.controlStat, f.controlErr
-}
-func (f *fakeConsole) consoleListPending() ([]consolePending, error) { return f.pending, f.listErr }
-func (f *fakeConsole) consoleGetPending(id int64) (consolePending, bool, error) {
-	it, ok := f.pendingByID[id]
-	return it, ok, nil
-}
-func (f *fakeConsole) consoleDecide(id int64, allow bool, approver string) error {
-	f.lastDecideID, f.lastDecideAllow, f.lastDecideApprover = id, allow, approver
-	return f.decideErr
-}
-
-func runCmd(t *testing.T, cmds []chatbridge.Command, name string, req chatbridge.Request) string {
+// bridgeCommandServer is a Server with one task and an enabled fake bridge
+// that allows chat "100". Its service context starts cancelled, so no engine
+// or background loop runs while the commands are exercised.
+func bridgeCommandServer(t *testing.T) (*Server, *Task, *fakeBridgeTransport) {
 	t.Helper()
+	skipWithoutDSN(t)
+	m, err := NewManager(t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { m.Close() })
+	task, err := m.CreateTask("chat bridge commands fixture", "check the login form", nil, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tid, _ := strconv.ParseInt(task.ID, 10, 64)
+	t.Cleanup(func() {
+		_, _ = m.pg.Exec(`DELETE FROM chat_bridges WHERE kind=$1`, fakeBridgeKind)
+		_, _ = m.pg.DeleteFindingsByTask(tid)
+		_ = m.pg.DeleteTask(tid)
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	s := New(ctx, m, t.TempDir(), t.TempDir(), t.TempDir())
+	s.archiveWG.Wait()
+	<-s.side.done
+
+	fake := &fakeBridgeTransport{}
+	s.chatBridges.transport = func(kind string) (chatbridge.Transport, bool) { return fake, kind == fakeBridgeKind }
+	if _, err := m.pg.SaveChatBridge(context.Background(), &db.ChatBridge{
+		Kind: fakeBridgeKind, Enabled: true, Config: json.RawMessage(`{"bot_token":"x"}`), AllowedChats: []string{"100"},
+	}, false); err != nil {
+		t.Fatal(err)
+	}
+	return s, task, fake
+}
+
+func runBridgeCommand(t *testing.T, s *Server, name, args string) string {
+	t.Helper()
+	cmds, text := s.chatBridgeHandlers(fakeBridgeKind)
+	req := chatbridge.Request{Kind: fakeBridgeKind, ChatID: "100", UserID: "7", Command: name, Args: args}
+	if name == "" {
+		return text(context.Background(), req)
+	}
 	for _, c := range cmds {
 		if c.Name == name {
 			return c.Run(context.Background(), req)
 		}
 	}
-	t.Fatalf("command /%s not found in table", name)
+	t.Fatalf("no /%s command", name)
 	return ""
 }
 
-func TestChatConsoleCommands(t *testing.T) {
-	f := &fakeConsole{
-		tasks: []consoleTask{
-			{ID: "7", Name: "Bank Aceh", Status: "running", Active: true, Findings: [4]int{1, 2, 3, 4}},
-			{ID: "8", Goal: "scan the DMZ\nmore", Status: "done"},
-		},
-		taskByID: map[string]consoleTask{
-			"7": {ID: "7", Name: "Bank Aceh", Goal: "pwn it", Status: "running", Paused: true, Findings: [4]int{1, 2, 3, 4}},
-		},
-		pending: []consolePending{
-			{ID: 42, Task: "7", Agent: "worker", Tool: "Bash", Input: `{"command":"nmap"}`, Reason: "out of scope", Risk: "high (80)"},
-		},
-		pendingByID: map[int64]consolePending{
-			42: {ID: 42, Task: "7", Agent: "worker", Tool: "Bash", Input: `{"command":"nmap x"}`, Reason: "out of scope", Risk: "high (80)", Targets: "mbanking.bankaceh.co.id:443 → 1.2.3.4"},
-		},
-	}
-	cmds := chatConsoleCommands(f)
+func TestChatBridgeTaskCommands(t *testing.T) {
+	s, task, _ := bridgeCommandServer(t)
+	ctx := context.Background()
 
-	// The table must not redefine whoami/help (those are built in elsewhere).
-	for _, c := range cmds {
-		if c.Name == "whoami" || c.Name == "help" {
-			t.Fatalf("console table must not include /%s", c.Name)
+	// Nothing selected yet: commands that need a task say how to pick one,
+	// and plain text is not sent anywhere.
+	for _, name := range []string{"task", "pause", "findings", ""} {
+		if got := runBridgeCommand(t, s, name, ""); got != bridgeNoTaskReply {
+			t.Fatalf("/%s without a task = %q", name, got)
 		}
 	}
 
-	if got := runCmd(t, cmds, "tasks", chatbridge.Request{}); !strings.Contains(got, "#7") ||
-		!strings.Contains(got, "▶") || !strings.Contains(got, "Bank Aceh") || !strings.Contains(got, "scan the DMZ") {
+	if got := runBridgeCommand(t, s, "tasks", ""); !strings.Contains(got, "#"+task.ID+" ") || !strings.Contains(got, "chat bridge commands fixture") {
 		t.Fatalf("/tasks = %q", got)
 	}
-	if got := runCmd(t, cmds, "tasks", chatbridge.Request{}); strings.Contains(got, "\nmore") {
-		t.Fatalf("/tasks must use only the first line of a goal: %q", got)
+	if got := runBridgeCommand(t, s, "task", "abc"); !strings.Contains(got, "is a number") {
+		t.Fatalf("/task abc = %q", got)
 	}
-	if got := runCmd(t, cmds, "task", chatbridge.Request{Args: "7"}); !strings.Contains(got, "Task #7") ||
-		!strings.Contains(got, "(paused)") || !strings.Contains(got, "1 critical, 2 high, 3 medium, 4 low") {
-		t.Fatalf("/task 7 = %q", got)
-	}
-	if got := runCmd(t, cmds, "task", chatbridge.Request{Args: "999"}); !strings.Contains(got, "No task") {
-		t.Fatalf("/task 999 = %q", got)
-	}
-	if got := runCmd(t, cmds, "task", chatbridge.Request{}); !strings.Contains(got, "Usage:") {
-		t.Fatalf("/task (no arg) = %q", got)
+	if got := runBridgeCommand(t, s, "task", "999999999"); !strings.Contains(got, "was not found") {
+		t.Fatalf("/task missing = %q", got)
 	}
 
-	// Control: success records the call; error surfaces.
-	f.controlStat = "paused"
-	if got := runCmd(t, cmds, "pause", chatbridge.Request{Args: "7"}); !strings.Contains(got, "Task 7 paused") ||
-		!strings.Contains(got, "Status: paused") {
-		t.Fatalf("/pause 7 = %q", got)
+	// Selecting is stored per chat and shown by /task and /tasks.
+	got := runBridgeCommand(t, s, "task", "#"+task.ID)
+	if !strings.Contains(got, "Selected task #"+task.ID) || !strings.Contains(got, "main agent") {
+		t.Fatalf("/task id = %q", got)
 	}
-	if f.lastControlID != "7" || f.lastControlAction != "pause" {
-		t.Fatalf("control recorded id=%q action=%q", f.lastControlID, f.lastControlAction)
+	if sel, err := s.m.PG().ChatBridgeTask(ctx, fakeBridgeKind, "100"); err != nil || sel != task.ID {
+		t.Fatalf("stored selection = %q, %v", sel, err)
 	}
-	// A copied-back "#7" must resolve to task 7.
-	if got := runCmd(t, cmds, "pause", chatbridge.Request{Args: "#7"}); !strings.Contains(got, "Task 7 paused") || f.lastControlID != "7" {
-		t.Fatalf("/pause #7 = %q (id=%q)", got, f.lastControlID)
+	if got := runBridgeCommand(t, s, "task", ""); !strings.Contains(got, "Selected task #"+task.ID) {
+		t.Fatalf("/task = %q", got)
 	}
-	f.controlErr = errString("task is being deleted")
-	if got := runCmd(t, cmds, "resume", chatbridge.Request{Args: "7"}); !strings.Contains(got, "Could not resume task 7") ||
-		!strings.Contains(got, "being deleted") {
-		t.Fatalf("/resume 7 (err) = %q", got)
-	}
-	f.controlErr = nil
-
-	// Approvals list + detail.
-	if got := runCmd(t, cmds, "approvals", chatbridge.Request{}); !strings.Contains(got, "#42") ||
-		!strings.Contains(got, "Bash") || !strings.Contains(got, "risk:high (80)") {
-		t.Fatalf("/approvals = %q", got)
-	}
-	if got := runCmd(t, cmds, "approval", chatbridge.Request{Args: "#42"}); !strings.Contains(got, "Approval #42") ||
-		!strings.Contains(got, "nmap x") || !strings.Contains(got, "out of scope") ||
-		!strings.Contains(got, "mbanking.bankaceh.co.id:443 → 1.2.3.4") {
-		t.Fatalf("/approval #42 = %q", got)
+	if got := runBridgeCommand(t, s, "tasks", ""); !strings.Contains(got, "#"+task.ID+" ") || !strings.Contains(got, "(selected)") {
+		t.Fatalf("/tasks after select = %q", got)
 	}
 
-	// Decide: approver is built from the chat user id, username as a label.
-	if got := runCmd(t, cmds, "approve", chatbridge.Request{Args: "42", UserID: "123", UserName: "op"}); !strings.Contains(got, "Approval 42 approved") {
-		t.Fatalf("/approve 42 = %q", got)
+	// /pause and /resume are the web UI's control.
+	if got := runBridgeCommand(t, s, "pause", ""); !strings.Contains(got, "paused") {
+		t.Fatalf("/pause = %q", got)
 	}
-	if f.lastDecideID != 42 || !f.lastDecideAllow || f.lastDecideApprover != "telegram:123 (@op)" {
-		t.Fatalf("decide recorded id=%d allow=%v approver=%q", f.lastDecideID, f.lastDecideAllow, f.lastDecideApprover)
+	if !task.lifecycleSnapshot().Paused {
+		t.Fatal("the task is not paused")
 	}
-	if got := runCmd(t, cmds, "deny", chatbridge.Request{Args: "42", UserID: "123"}); !strings.Contains(got, "Approval 42 denied") {
-		t.Fatalf("/deny 42 = %q", got)
+	if got := runBridgeCommand(t, s, "pause", ""); !strings.Contains(got, "Could not pause") || !strings.Contains(got, "already paused") {
+		t.Fatalf("second /pause = %q", got)
 	}
-	if f.lastDecideAllow {
-		t.Fatalf("/deny recorded allow=true")
+	if got := runBridgeCommand(t, s, "resume", task.ID); !strings.Contains(got, "resumed") {
+		t.Fatalf("/resume = %q", got)
 	}
-	if got := runCmd(t, cmds, "approve", chatbridge.Request{Args: "notanumber"}); !strings.Contains(got, "Usage:") {
-		t.Fatalf("/approve (bad id) = %q", got)
+	if task.lifecycleSnapshot().Paused {
+		t.Fatal("the task is still paused")
 	}
 
-	// Decide error surfaces to the chat.
-	f.decideErr = errString("approval already decided or does not exist; please refresh the list")
-	if got := runCmd(t, cmds, "approve", chatbridge.Request{Args: "42", UserID: "1"}); !strings.Contains(got, "Could not approve approval 42") ||
-		!strings.Contains(got, "already decided") {
-		t.Fatalf("/approve (decide err) = %q", got)
+	// /findings: titles, severities and statuses, never the evidence.
+	tid, _ := strconv.ParseInt(task.ID, 10, 64)
+	if got := runBridgeCommand(t, s, "findings", ""); !strings.Contains(got, "No findings yet") {
+		t.Fatalf("/findings empty = %q", got)
+	}
+	if _, err := s.m.PG().AddFinding(tid, 0, "sqli", "SQL injection in login", "high", "the username field is injectable", "POST /login user=admin'-- SECRET-EVIDENCE", "w1", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.m.PG().AddFinding(tid, 0, "info-leak", "", "low", "", "", "w1", nil); err != nil {
+		t.Fatal(err)
+	}
+	got = runBridgeCommand(t, s, "findings", "")
+	if !strings.Contains(got, "[high] SQL injection in login") || !strings.Contains(got, "[low] info-leak") || strings.Index(got, "[high]") > strings.Index(got, "[low]") {
+		t.Fatalf("/findings = %q", got)
+	}
+	if strings.Contains(got, "SECRET-EVIDENCE") || strings.Contains(got, "injectable") {
+		t.Fatalf("/findings leaked evidence or summary: %q", got)
+	}
+	// Links appear once a public address is configured.
+	if err := s.m.PG().SetSetting(settingNotifyPublicBaseURL, "https://artex.example/"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = s.m.PG().Exec(`DELETE FROM settings WHERE key=$1`, settingNotifyPublicBaseURL) })
+	if got := runBridgeCommand(t, s, "findings", ""); !strings.Contains(got, "https://artex.example/function/findings/detail?id=") {
+		t.Fatalf("/findings links = %q", got)
+	}
+	if got := runBridgeCommand(t, s, "task", ""); !strings.Contains(got, "https://artex.example/function/tasks/detail?id="+task.ID) {
+		t.Fatalf("/task link = %q", got)
+	}
+
+	// Plain text goes to the task's main agent: here the rule handler, as no
+	// LLM is configured, so the reply comes back at once. The message is in
+	// the shared main-agent transcript.
+	got = runBridgeCommand(t, s, "", "how is it going?")
+	if !strings.Contains(got, "rule mode") {
+		t.Fatalf("text = %q", got)
+	}
+	acts, _, err := task.Store.ActivityList(nil, 0, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, a := range acts {
+		if a.Worker == "mainagent" && a.Kind == "user" && a.Summary == "how is it going?" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the message is not in the main-agent transcript: %+v", acts)
 	}
 }
 
-type errString string
-
-func (e errString) Error() string { return string(e) }
-
-func TestChatConsoleEmptyLists(t *testing.T) {
-	cmds := chatConsoleCommands(&fakeConsole{})
-	if got := runCmd(t, cmds, "tasks", chatbridge.Request{}); got != "No tasks yet." {
-		t.Fatalf("/tasks empty = %q", got)
-	}
-	if got := runCmd(t, cmds, "approvals", chatbridge.Request{}); got != "No pending approvals." {
-		t.Fatalf("/approvals empty = %q", got)
-	}
-}
-
-// TestConsoleDecideAdapter exercises the security-relevant adapter against a
-// real database: a Telegram /approve must resolve the pending row and record
-// the chat identity as the approver, and a second decision must be refused.
-func TestConsoleDecideAdapter(t *testing.T) {
-	dsn, _, err := db.DSN()
-	if err != nil {
-		db.SkipPGUnavailable(t, err)
-	}
-	d, err := db.Open(dsn)
-	if err != nil {
+func TestChatBridgeRelayAnswer(t *testing.T) {
+	s, task, fake := bridgeCommandServer(t)
+	// The relay runs on the service context; give it a live one.
+	s.ctx = t.Context()
+	tid, _ := strconv.ParseInt(task.ID, 10, 64)
+	if _, err := s.m.PG().UpsertTaskCredential(tid, db.TaskCredentialInput{Domain: "app.example", Username: "admin", Password: "Correct-Horse-9", Source: "user"}); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = d.Close() })
+	req := chatbridge.Request{Kind: fakeBridgeKind, ChatID: "100", UserID: "7"}
 
-	scope := "chat-console-decide"
-	t.Cleanup(func() { _, _ = d.Exec(`DELETE FROM intercept_pending WHERE task_id=$1`, scope) })
+	answer := "Logged in as admin with Correct-Horse-9.\n```http\nGET /admin HTTP/1.1\nCookie: sid=abcdef123456\n```\nNext I will map the admin panel."
+	s.bridgeRelayAnswer(req, task.ID, answer, nil)
+	got := fake.sent["100"]
+	if len(got) != 1 {
+		t.Fatalf("relayed %d messages, want 1: %q", len(got), got)
+	}
+	msg := got[0]
+	if !strings.HasPrefix(msg, "Task #"+task.ID+", main agent:") || !strings.Contains(msg, "Next I will map the admin panel.") {
+		t.Fatalf("relay = %q", msg)
+	}
+	for _, leak := range []string{"Correct-Horse-9", "abcdef123456", "GET /admin"} {
+		if strings.Contains(msg, leak) {
+			t.Fatalf("relay leaked %q: %q", leak, msg)
+		}
+	}
 
-	s := &Server{m: &Manager{pg: d, interceptor: intercept.New(d)}}
+	// A turn that ended without an answer gets a fixed reason, not the error.
+	fake.sent = nil
+	s.bridgeRelayAnswer(req, task.ID, "", agent.AbortChatPausedWithTask)
+	if got := fake.sent["100"]; len(got) != 1 || !strings.Contains(got[0], "the task was paused") {
+		t.Fatalf("paused relay = %q", got)
+	}
 
-	// An audit record must exist for the approver patch to be stored.
-	id, err := d.CreateInterceptPending(0, 0, scope, "worker", "Bash",
-		[]byte(`{"command":"nmap"}`), "out of scope", &db.InterceptAudit{Correlation: "exact"})
-	if err != nil {
+	// An answer for a chat that was removed from the allowlist meanwhile is
+	// dropped.
+	if _, err := s.m.PG().SaveChatBridge(context.Background(), &db.ChatBridge{Kind: fakeBridgeKind, Enabled: true, Config: json.RawMessage(`{"bot_token":"x"}`), AllowedChats: []string{"200"}}, false); err != nil {
 		t.Fatal(err)
 	}
-
-	if err := s.consoleDecide(id, true, "telegram:123 (@op)"); err != nil {
-		t.Fatalf("consoleDecide: %v", err)
-	}
-
-	var status, decidedBy, approver string
-	if err := d.QueryRow(
-		`SELECT status, decided_by, COALESCE(audit->>'approver','') FROM intercept_pending WHERE id=$1`, id,
-	).Scan(&status, &decidedBy, &approver); err != nil {
-		t.Fatal(err)
-	}
-	if status != "allowed" || decidedBy != "human" || approver != "telegram:123 (@op)" {
-		t.Fatalf("stored status=%q decided_by=%q approver=%q", status, decidedBy, approver)
-	}
-
-	// A second decision on the same row is refused.
-	if err := s.consoleDecide(id, false, "telegram:123 (@op)"); err != intercept.ErrAlreadyDecided {
-		t.Fatalf("second decide err = %v, want ErrAlreadyDecided", err)
+	fake.sent = nil
+	s.bridgeRelayAnswer(req, task.ID, "late answer", nil)
+	if len(fake.sent) != 0 {
+		t.Fatalf("an answer reached a chat that is no longer allowed: %q", fake.sent)
 	}
 }
