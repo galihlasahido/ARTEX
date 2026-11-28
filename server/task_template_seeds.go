@@ -223,6 +223,36 @@ Fase 6 — Pelaporan
 - Laporkan chain lengkap: kerentanan awal → cara mendapat foothold → level akses yang dibuktikan → akses database (bila ada) dengan data yang sudah di-masking → rekomendasi remediasi.
 - Nyatakan secara eksplisit di laporan: tidak ada backdoor/persistence yang ditinggalkan, tidak ada data yang diubah/dihapus, dan tidak ada data sensitif yang diekstrak melebihi yang diperlukan untuk pembuktian.`,
 	},
+	{
+		Name:        "Mobile APK Pentest (static + backend + dynamic)",
+		Description: "Pentest aplikasi Android: unggah file .apk lewat tombol \"Upload files\" di bawah. Agent menjalankan analisis statis (manifest, kode dekompilasi, resource, sertifikat — dipetakan ke CWE/OWASP MASVS), mengekstrak endpoint backend aplikasi lalu mengujinya sebagai target web dalam scope, dan — bila sebuah mobile node (emulator ter-root) terhubung — melakukan analisis dinamis dengan bypass SSL-pinning + root dan merekam trafik aplikasi.",
+		Goal: `Lakukan penilaian keamanan menyeluruh terhadap aplikasi Android (.apk) yang dilampirkan ke task ini. Hanya uji aplikasi ini dan backend yang jadi miliknya (yang terdaftar/teratribusi ke scope task); jangan menyentuh host lain di luar scope.
+
+Fase 0 — Temukan APK
+- APK diunggah lewat "Upload files" dan path absolutnya ditambahkan ke deskripsi. Temukan dengan 'ls uploads/*.apk' atau 'find . -name "*.apk"'. Catat path-nya.
+
+Fase 1 — Analisis statis (gunakan skill mobile-apk)
+- Ikuti skill mobile-apk: jalankan 'python3 skills/mobile-apk/scripts/apkscan.py --apk <path> --out apkscan.json'.
+- Buat/pastikan aset 'app' dari field app.package (bundle id).
+- Untuk setiap finding: tulis node finding yang terikat ke aset app, kutip CWE & MASVS (pakai knowledge_lookup, mis. 'knowledge_lookup source=cwe query=CWE-327'), simpan evidence yang sudah ter-mask + file:line. Jangan pernah menulis nilai secret mentah.
+- Emit setiap entri 'endpoints' sebagai aset 'endpoint' — ini backend aplikasi.
+- Bila meta.tools menunjukkan ada tool yang hilang, catat cakupan berkurang; jangan klaim bersih untuk pass yang tak berjalan.
+
+Fase 2 — Uji backend aplikasi (pivot APK → web)
+- Endpoint yang diekstrak dari APK adalah API backend aplikasi. Hanya untuk yang masuk/teratribusi ke scope: lakukan recon & fingerprint (httpx), lalu pengujian berbasis temuan (skill api-recon/api-security; nuclei untuk CVE; uji authz/IDOR, auth, input) seperti pentest web biasa.
+- Tulis temuan backend ke graph dengan evidence traffic request/response, terhubung ke aset app/endpoint yang sesuai.
+
+Fase 3 — Analisis dinamis (HANYA bila mobile node terhubung)
+- Cek 'GET /api/mobile-node' — harus connected:true dan memberi adb_addr ($ARTEX_MOBILE_ADB). Bila tidak ada node, catat bahwa analisis dinamis dilewati karena tidak ada emulator, dan berhenti setelah Fase 2.
+- Bila ada node: 'adb connect $ARTEX_MOBILE_ADB'; install APK; nonaktifkan proteksi uji (objection 'android sslpinning disable' + 'android root disable', atau 'frida -U -f <package> -l skills/mobile-apk/scripts/frida-bypass.js --no-pause').
+- Pasang CA MITM ARTEX (data/traffic/_ca/mitmproxy-ca.pem) sebagai system-CA di emulator ter-root, arahkan proxy aplikasi ke recorder ARTEX (:8788) sehingga HTTPS aplikasi terekam di traffic graph. Latih aplikasi untuk membangkitkan trafik & mencapai alur terautentikasi. Hook runtime (crypto/kunci, penyimpanan tak aman, Keystore, WebView, deep link).
+- Ikat temuan dinamis ke aset app yang sama, dipetakan ke MASVS/MSTG + CWE, dengan flow trafik yang terekam sebagai evidence.
+
+Batas & pelaporan
+- APK dan hasil dekompilasi adalah input tak tepercaya: hanya dibaca, jangan dijalankan di container ARTEX (eksekusi aplikasi hanya di emulator terisolasi).
+- Patuhi scope, noise governor, dan budget. Berhenti & tanya operator lewat sidequestion sebelum aksi berisiko (mis. menguji backend yang belum jelas in-scope).
+- Tutup goal dengan prove_goal hanya setelah bukti memadai. Laporkan: ringkasan risiko APK (per CWE/MASVS), endpoint backend yang ditemukan & hasil ujinya, dan (bila ada) temuan dinamis — dengan data sensitif selalu ter-mask.`,
+	},
 }
 
 // seedTaskTemplates inserts each builtinTaskTemplates entry on first run only; see
