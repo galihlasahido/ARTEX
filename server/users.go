@@ -136,6 +136,9 @@ func (s *Server) adminGate(mux *http.ServeMux) http.Handler {
 // stay open: those are operator work. Keep this list in sync with the routes in
 // server.go — a pattern string must match a mux.HandleFunc registration exactly.
 var adminPatterns = map[string]bool{
+	// LDAP configuration (admin): direct-bind login settings.
+	"GET /api/ldap": true,
+	"PUT /api/ldap": true,
 	// User management (admin-only page).
 	"GET /api/users":         true,
 	"POST /api/users":        true,

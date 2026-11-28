@@ -794,6 +794,8 @@ func (s *Server) Handler() http.Handler {
 	// Identity & user management. /api/me is any authenticated caller; the
 	// /api/users routes are admin-only (enforced by adminGate via adminPatterns).
 	mux.HandleFunc("GET /api/me", s.me)
+	mux.HandleFunc("GET /api/ldap", s.getLDAPConfig) // LDAP direct-bind config (admin)
+	mux.HandleFunc("PUT /api/ldap", s.putLDAPConfig) // LDAP direct-bind config (admin)
 	mux.HandleFunc("GET /api/users", s.listUsers)
 	mux.HandleFunc("POST /api/users", s.createUser)
 	mux.HandleFunc("PATCH /api/users/{id}", s.updateUser)

@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -793,24 +794,46 @@ func (s *Server) loginUser(w http.ResponseWriter, ip, username, password string)
 		return
 	}
 	u, err := s.m.pg.Users().GetByName(username)
-	if err == db.ErrUserNotFound {
-		writeErr(w, 401, "Incorrect username or password")
-		return
-	}
-	if err != nil {
+	switch {
+	case err == nil:
+		if !u.Active {
+			// A deactivated account cannot log in, even via LDAP.
+			writeErr(w, 401, "Incorrect username or password")
+			return
+		}
+		if bcrypt.CompareHashAndPassword([]byte(u.Hash), []byte(password)) == nil {
+			s.issueUserToken(w, ip, u)
+			return
+		}
+		// Local password did not match — the account may be LDAP-backed; fall through.
+	case errors.Is(err, db.ErrUserNotFound):
+		// No local record — LDAP may create one on a successful bind.
+	default:
 		writeErr(w, 503, errDataSourceUnavailable)
 		return
 	}
-	if !u.Active {
-		writeErr(w, 401, "Incorrect username or password")
+
+	// LDAP direct bind (no bind DN): validate the password by binding as the user.
+	if cfg := s.ldapConfig(); cfg.ready() && s.ldapAuthenticate(cfg, username, password) {
+		rec, lerr := s.ensureLDAPUser(username, cfg.DefaultRole)
+		if lerr != nil {
+			writeErr(w, 503, errDataSourceUnavailable)
+			return
+		}
+		if !rec.Active {
+			writeErr(w, 401, "Incorrect username or password")
+			return
+		}
+		s.issueUserToken(w, ip, rec)
 		return
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(u.Hash), []byte(password)); err != nil {
-		writeErr(w, 401, "Incorrect username or password")
-		return
-	}
+	writeErr(w, 401, "Incorrect username or password")
+}
+
+// issueUserToken resets the login limiter, refreshes the user cache so the
+// session validates against current state, and returns a JWT for u.
+func (s *Server) issueUserToken(w http.ResponseWriter, ip string, u db.User) {
 	s.loginLimit.reset(ip)
-	// Make sure this session validates against the account's current state.
 	s.reloadUsers()
 	tok, err := signJWTUser(s.jwtKey, u.Username, u.Role, u.PwdVersion)
 	if err != nil {
