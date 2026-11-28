@@ -61,27 +61,41 @@ trust-all TLS, WebView JS-interface/file-access/cleartext, SQL concatenation,
 sensitive logging, dynamic code loading, world-readable storage, and the signing
 certificate.
 
-## Phase 2 — Dynamic analysis (only when an emulator is reachable)
+## Phase 2 — Dynamic analysis (only when the mobile node is connected)
 
-Requires an **external rooted Android emulator** over adb (it is never run in
-this container — see the design doc for why and for host setup with rootAVD).
-Check reachability first: `adb connect $ANDROID_ADB` then `adb devices`. If no
-device, record that dynamic analysis was skipped for lack of an emulator and
-stop at Phase 1.
+The rooted emulator runs on a **separate mobile node** reached over the adb
+tunnel — never in this container (see the design doc + `deploy/mobile-node/`).
+Check first: `GET /api/mobile-node` must show `connected:true`; it returns the
+loopback `adb_addr` core exposes the device on (default `127.0.0.1:15555`; this
+is `$ARTEX_MOBILE_ADB`). If no node is connected, record that dynamic analysis
+was skipped for lack of a node and stop at Phase 1.
 
-With a device:
+With a node connected:
 
-1. `adb install -r <path.apk>`.
-2. Push and start the matching `frida-server`; confirm `frida-ps -U` works.
-3. Disable defenses for testing: `objection -g <package> explore` then
-   `android sslpinning disable` and `android root disable`, or load the
-   equivalent Frida scripts.
-4. Trust ARTEX's MITM CA as a **system** CA (root) and set the emulator proxy to
-   the ARTEX recorder (`:8788`). The app's HTTPS now flows through ARTEX's
-   traffic graph and is scored by the existing findings/evidence pipeline.
-5. Hook at runtime (Frida): crypto calls (keys/plaintext), file I/O (insecure
-   storage), Keystore, clipboard, WebView URLs, exported-component intents and
-   deep links.
+1. `adb connect $ARTEX_MOBILE_ADB` then `adb devices` (reaches the emulator
+   through the tunnel). `adb -s $ARTEX_MOBILE_ADB install -r uploads/<app>.apk`.
+2. `frida-ps -U` to confirm frida-server is up on the device (the node started
+   it). Get the package: `aapt dump badging uploads/<app>.apk | head -1`.
+3. Disable defenses for testing (authorized app only):
+   - objection: `objection -g <package> explore` then `android sslpinning
+     disable` and `android root disable`; or
+   - Frida: `frida -U -f <package> -l skills/mobile-apk/scripts/frida-bypass.js
+     --no-pause` (universal SSL-pinning + root-detection bypass).
+4. Trust ARTEX's MITM CA as a **system** CA on the rooted emulator and point the
+   app's traffic at the recorder, so its HTTPS lands in ARTEX's traffic graph:
+   - CA is at `data/traffic/_ca/mitmproxy-ca.pem` (the ARTEX CA the agent already
+     trusts). Push it and install into the system store (root/Magisk), e.g. via
+     a Magisk "trust user certs" module or a `/system/etc/security/cacerts`
+     remount.
+   - Set the device proxy to ARTEX's recorder: `adb -s $ARTEX_MOBILE_ADB shell
+     settings put global http_proxy <core-host>:8788`.
+   - NOTE: core binds `:8788` to loopback, so the node must be able to reach it
+     (forward `:8788` over the same tunnel, or run on the same network). This is
+     the one per-deployment wiring step; confirm a test request appears in the
+     traffic page before relying on capture.
+5. Hook at runtime with Frida: crypto calls (keys/plaintext), file I/O (insecure
+   storage, MODE_WORLD_*), Keystore, clipboard, WebView URLs, exported-component
+   intents and deep links.
 6. Exercise the app (UIAutomator/monkey or operator-guided) to generate traffic
    and reach authenticated flows.
 
