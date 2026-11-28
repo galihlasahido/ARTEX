@@ -1,0 +1,20 @@
+# ARTEX mobile node (Linux/KVM) — TEMPLATE. The host must expose /dev/kvm.
+# Usage:
+#   ARTEX_CORE_WS=wss://<core-host>/api/mobile-node/connect \
+#   ARTEX_NODE_TOKEN=<raw node token> \
+#     docker compose up -d --build
+services:
+  mobile-node:
+    build:
+      # Context is the repo root so the node-agent compiles from ./cmd.
+      context: ../../
+      dockerfile: deploy/mobile-node/Dockerfile
+    devices:
+      - /dev/kvm:/dev/kvm # hardware acceleration; required for the emulator
+    environment:
+      ARTEX_CORE_WS: ${ARTEX_CORE_WS:?set ARTEX_CORE_WS to wss://<core>/api/mobile-node/connect}
+      ARTEX_NODE_TOKEN: ${ARTEX_NODE_TOKEN:?set ARTEX_NODE_TOKEN to the token issued in ARTEX}
+      ARTEX_ADBD: 127.0.0.1:5555
+      # Self-signed core TLS during dev only:
+      # ARTEX_NODE_INSECURE: "1"
+    restart: unless-stopped
