@@ -2837,5 +2837,8 @@
   "Members of this group can access the task.": "该组的成员可以访问此任务。",
   "Task created, but could not set its group.": "任务已创建，但无法设置其分组。",
   "Task group (optional)": "任务组（可选）",
-  "e.g. Pentest team A": "例如：渗透测试 A 组"
+  "e.g. Pentest team A": "例如：渗透测试 A 组",
+  "Generate": "生成",
+  "Hide": "隐藏",
+  "Show": "显示"
 }

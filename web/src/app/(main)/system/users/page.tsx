@@ -2,7 +2,7 @@
 
 import * as React from "react";
 
-import { MoreHorizontal, ShieldCheck, UserPlus } from "lucide-react";
+import { Eye, EyeOff, MoreHorizontal, ShieldCheck, Sparkles, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -56,6 +56,84 @@ const PASSWORD_RULE = "At least 12 characters, with an uppercase letter, a lower
 // passwordInvalid reports whether pw fails the complexity rule.
 function passwordInvalid(pw: string): boolean {
   return pw.length < 12 || !/[a-z]/.test(pw) || !/[A-Z]/.test(pw) || !/[0-9]/.test(pw) || !/[^A-Za-z0-9]/.test(pw);
+}
+
+// randInt returns a uniform integer in [0, n) from the crypto RNG.
+function randInt(n: number): number {
+  return crypto.getRandomValues(new Uint32Array(1))[0] % n;
+}
+
+// generatePassword builds a 16-char password that always satisfies the rule:
+// one of each class plus random fill, then shuffled. Ambiguous characters
+// (O/0, l/1) are left out so it is easy to read and transcribe.
+function generatePassword(): string {
+  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const lower = "abcdefghijkmnpqrstuvwxyz";
+  const digit = "23456789";
+  const symbol = "!@#$%^&*-_=+?";
+  const all = upper + lower + digit + symbol;
+  const pick = (set: string) => set[randInt(set.length)];
+  const chars = [pick(upper), pick(lower), pick(digit), pick(symbol)];
+  while (chars.length < 16) chars.push(pick(all));
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = randInt(i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join("");
+}
+
+// PasswordField is the password input shared by the create and reset dialogs:
+// a Generate button fills a compliant password and reveals it, and a toggle
+// shows/hides the value so the admin can copy it.
+function PasswordField({
+  id,
+  label,
+  value,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [reveal, setReveal] = React.useState(false);
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      <div className="flex gap-2">
+        <Input
+          id={id}
+          type={reveal ? "text" : "password"}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          autoComplete="new-password"
+          className="flex-1 font-mono"
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          title={reveal ? t("Hide") : t("Show")}
+          onClick={() => setReveal((v) => !v)}
+        >
+          {reveal ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => {
+            onChange(generatePassword());
+            setReveal(true);
+          }}
+        >
+          <Sparkles className="size-4" /> {t("Generate")}
+        </Button>
+      </div>
+      <p className={`text-xs ${value !== "" && passwordInvalid(value) ? "text-destructive" : "text-muted-foreground"}`}>
+        {t(PASSWORD_RULE)}
+      </p>
+    </div>
+  );
 }
 
 export default function UserManagementPage() {
@@ -282,21 +360,7 @@ function CreateUserDialog({
               autoComplete="off"
             />
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="new-password">{t("Password")}</Label>
-            <Input
-              id="new-password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="new-password"
-            />
-            <p
-              className={`text-xs ${password !== "" && passwordInvalid(password) ? "text-destructive" : "text-muted-foreground"}`}
-            >
-              {t(PASSWORD_RULE)}
-            </p>
-          </div>
+          <PasswordField id="new-password" label={t("Password")} value={password} onChange={setPassword} />
           <div className="space-y-1.5">
             <Label>{t("Role")}</Label>
             <Select value={role} onValueChange={(v) => setRole(v as Role)}>
@@ -354,21 +418,7 @@ function ResetPasswordDialog({ user, onClose }: { user: User | null; onClose: ()
             {user ? t("Set a new password for {name}.").replace("{name}", user.username) : ""}
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-1.5">
-          <Label htmlFor="reset-password">{t("New password")}</Label>
-          <Input
-            id="reset-password"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="new-password"
-          />
-          <p
-            className={`text-xs ${password !== "" && passwordInvalid(password) ? "text-destructive" : "text-muted-foreground"}`}
-          >
-            {t(PASSWORD_RULE)}
-          </p>
-        </div>
+        <PasswordField id="reset-password" label={t("New password")} value={password} onChange={setPassword} />
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
             {t("Cancel")}

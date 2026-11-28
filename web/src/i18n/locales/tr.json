@@ -2837,5 +2837,8 @@
   "Members of this group can access the task.": "Anggota grup ini bisa mengakses task tersebut.",
   "Task created, but could not set its group.": "Task dibuat, tapi grupnya gagal diset.",
   "Task group (optional)": "Task group (opsional)",
-  "e.g. Pentest team A": "mis. Tim Pentest A"
+  "e.g. Pentest team A": "mis. Tim Pentest A",
+  "Generate": "Buat",
+  "Hide": "Sembunyikan",
+  "Show": "Tampilkan"
 }
