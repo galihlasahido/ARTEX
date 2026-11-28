@@ -1126,7 +1126,7 @@ func (s *Server) Handler() http.Handler {
 	// /api/* goes through CORS + JWT; everything else is served by the embedded
 	// frontend (public — auth is enforced client-side and on the API). With the
 	// no-embed build the webui handler just 404s (run `next dev` separately).
-	api := cors(s.requireAuth(s.adminGate(mux)))
+	api := cors(s.requireAuth(s.taskGate(s.adminGate(mux))))
 	root := http.NewServeMux()
 	root.Handle("/api/", api)
 	webui := s.webuiHandler()
@@ -1251,6 +1251,9 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 		active = t.ID
 	}
 	list := s.m.List()
+	if p, ok := identityFrom(r.Context()); ok {
+		list = s.accessibleTasks(p, list) // a 'user' sees only its own / group tasks
+	}
 	metrics, err := s.m.PG().TaskListMetricsAll()
 	if err != nil {
 		log.Printf("[tasks] list metrics query failed — metrics zeroed: %v", err)
@@ -1910,6 +1913,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		LLMRotate:       req.LLMRotate,
 		TargetGate:      req.TargetGate,
 		AutoApprove:     req.AutoApprove,
+		Owner:           requestOwner(r),
 	})
 	if err != nil {
 		if errors.Is(err, db.ErrTaskCategoryInvalid) || errors.Is(err, db.ErrTaskCategoryNotFound) {

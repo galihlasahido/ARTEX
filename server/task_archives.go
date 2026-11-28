@@ -605,6 +605,10 @@ func (s *Server) queueTaskArchivesBatch(w http.ResponseWriter, r *http.Request) 
 			items = append(items, archiveBatchItem{ID: item.id, Error: "invalid task id"})
 			continue
 		}
+		if t, ok := s.m.Task(item.id); ok && s.deniesTask(r, t) {
+			items = append(items, archiveBatchItem{ID: item.id, Error: "no access"})
+			continue
+		}
 		ids = append(ids, item.id)
 	}
 	ids = s.orderLiveTaskArchiveBatch(ids)

@@ -51,6 +51,8 @@ type Task struct {
 	QueuedAt           int64   `json:"queued_at,omitempty"`
 	QueueMode          string  `json:"queue_mode,omitempty"`
 	ParentRef          string  `json:"parent_ref,omitempty"`     // parent task id (orchestration spawn record)
+	Owner              string  `json:"owner,omitempty"`          // username that created the task (per-user access)
+	GroupID            *int64  `json:"group_id,omitempty"`       // task group this task belongs to (nil = none)
 	LLMProfileID       *int64  `json:"llm_profile_id,omitempty"` // LLM profile to run this task's planner/worker; nil = use the globally active profile
 	LLMProfileIDs      []int64 `json:"llm_profile_ids,omitempty"`
 	ActiveLLMProfileID *int64  `json:"active_llm_profile_id,omitempty"`
@@ -1037,6 +1039,7 @@ func taskFromPG(pt *pgdb.Task, store *pgdb.ExplorationStore, ic *intercept.Inter
 		Description: pt.Description, Goal: pt.Goal, CreatedAt: pt.CreatedAt.Unix(), Paused: pt.Paused, Queued: pt.Queued,
 		QueuedAt: unixNanoOrZero(pt.QueuedAt), QueueMode: pt.QueueMode,
 		CompletedAt: unixOrZero(pt.CompletedAt), Status: pt.Status, ParentRef: pt.ParentRef,
+		Owner: pt.Owner, GroupID: cloneInt64Ptr(pt.GroupID),
 		LLMProfileID:  pt.LLMProfileID,
 		LLMProfileIDs: append([]int64(nil), pt.LLMProfileIDs...), ActiveLLMProfileID: pt.ActiveLLMProfileID, LLMRotate: pt.LLMRotate,
 		LLMChainRevision: pt.LLMChainRevision,

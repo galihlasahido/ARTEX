@@ -210,8 +210,12 @@ func (s *Server) updateTasksCategoryBatch(w http.ResponseWriter, r *http.Request
 		case !parsed.valid:
 			item.Error = "bad task id"
 		default:
-			if _, live := s.m.Task(parsed.id); live {
-				pending = append(pending, parsed.id)
+			if t, live := s.m.Task(parsed.id); live {
+				if s.deniesTask(r, t) {
+					item.Error = "no access"
+				} else {
+					pending = append(pending, parsed.id)
+				}
 			} else {
 				item.Error = "task not found"
 			}

@@ -36,12 +36,16 @@ type Task struct {
 	LLMFailoverReason  string  `json:"llm_failover_reason,omitempty"`
 	// LLMRotate: per-intent chain-head rotation switch (#85); false = classic
 	// ordered failover from the active head.
-	LLMRotate     bool       `json:"llm_rotate"`
-	SourceTaskIDs []int64    `json:"source_task_ids,omitempty"`
-	CompanyIDs    []int64    `json:"company_ids,omitempty"`
-	ParentRef     string     `json:"parent_ref,omitempty"` // parent task id (recorded by orchestration spawn; empty=top level)
-	CreatedAt     time.Time  `json:"created_at"`
-	CompletedAt   *time.Time `json:"completed_at,omitempty"` // when it entered a terminal state (done/failed/timeout); nil for non-terminal
+	LLMRotate     bool    `json:"llm_rotate"`
+	SourceTaskIDs []int64 `json:"source_task_ids,omitempty"`
+	CompanyIDs    []int64 `json:"company_ids,omitempty"`
+	ParentRef     string  `json:"parent_ref,omitempty"` // parent task id (recorded by orchestration spawn; empty=top level)
+	// Owner is the username that created the task; GroupID is the task group it
+	// belongs to (nil = none). Together they drive per-user task access.
+	Owner       string     `json:"owner,omitempty"`
+	GroupID     *int64     `json:"group_id,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"` // when it entered a terminal state (done/failed/timeout); nil for non-terminal
 	// Task-level timeout (see the task-level timeout and wrap-up design doc).
 	TimeoutSeconds int        `json:"timeout_seconds"`        // 0=no time limit
 	FirstRunAt     *time.Time `json:"first_run_at,omitempty"` // when it first actually started running (not created_at); nil=not yet run
@@ -185,6 +189,9 @@ type TaskCreateOptions struct {
 	TargetGate *bool
 	// AutoApprove opts the task into automatic scan (ask -> allow); nil = off.
 	AutoApprove *bool
+	// Owner is the username that created the task, for per-user access control.
+	// Empty is treated as admin-only by the access check.
+	Owner string
 }
 
 // CreateTaskWithOptions creates an exploration, task, direct source relations,
@@ -267,11 +274,12 @@ VALUES ($1, 'fact', $2, 0, 'origin', 'system')`, expID, string(originPayload)); 
 	t.TargetGate = opts.TargetGate != nil && *opts.TargetGate
 	t.AutoApprove = opts.AutoApprove != nil && *opts.AutoApprove
 	if err := tx.QueryRow(`
-INSERT INTO tasks(name, category_id, description, goal, exploration_id, llm_profile_id, active_llm_profile_id, timeout_seconds, plan_heartbeat_seconds, plan_quiet_mode, coverage_enabled, llm_rotate, target_gate, auto_approve)
-VALUES ($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10,$11,$12,$13)
-RETURNING id, status, paused, created_at`, opts.Name, opts.CategoryID, description, goal, expID, active, opts.TimeoutSeconds, opts.PlanHeartbeatSeconds, quietMode, coverageEnabled, rotate, t.TargetGate, t.AutoApprove).Scan(&t.ID, &t.Status, &t.Paused, &t.CreatedAt); err != nil {
+INSERT INTO tasks(name, category_id, description, goal, exploration_id, llm_profile_id, active_llm_profile_id, timeout_seconds, plan_heartbeat_seconds, plan_quiet_mode, coverage_enabled, llm_rotate, target_gate, auto_approve, owner)
+VALUES ($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+RETURNING id, status, paused, created_at`, opts.Name, opts.CategoryID, description, goal, expID, active, opts.TimeoutSeconds, opts.PlanHeartbeatSeconds, quietMode, coverageEnabled, rotate, t.TargetGate, t.AutoApprove, opts.Owner).Scan(&t.ID, &t.Status, &t.Paused, &t.CreatedAt); err != nil {
 		return nil, err
 	}
+	t.Owner = opts.Owner
 	if err := insertTaskRelations(tx, t.ID, opts.SourceTaskIDs); err != nil {
 		return nil, err
 	}
@@ -385,11 +393,11 @@ func insertTaskLLMProfiles(tx *sql.Tx, taskID int64, profileIDs []int64) error {
 
 const taskCols = `id, COALESCE(name,''), category_id,
 COALESCE((SELECT category.name FROM task_categories category WHERE category.id=tasks.category_id),''),
-description, goal, exploration_id, status, paused, queued, queued_at, COALESCE(queue_mode,''), llm_profile_id, active_llm_profile_id, COALESCE(parent_ref,''), pinned_at, created_at, completed_at, COALESCE(timeout_seconds,0), COALESCE(plan_heartbeat_seconds,300), COALESCE(plan_quiet_mode,true), COALESCE(coverage_enabled,true), COALESCE(llm_rotate,false), first_run_at, deadline_at, target_gate, auto_approve`
+description, goal, exploration_id, status, paused, queued, queued_at, COALESCE(queue_mode,''), llm_profile_id, active_llm_profile_id, COALESCE(parent_ref,''), pinned_at, created_at, completed_at, COALESCE(timeout_seconds,0), COALESCE(plan_heartbeat_seconds,300), COALESCE(plan_quiet_mode,true), COALESCE(coverage_enabled,true), COALESCE(llm_rotate,false), first_run_at, deadline_at, target_gate, auto_approve, COALESCE(owner,''), group_id`
 
 func scanTask(sc interface{ Scan(...any) error }) (*Task, error) {
 	var t Task
-	if err := sc.Scan(&t.ID, &t.Name, &t.CategoryID, &t.CategoryName, &t.Description, &t.Goal, &t.ExplorationID, &t.Status, &t.Paused, &t.Queued, &t.QueuedAt, &t.QueueMode, &t.LLMProfileID, &t.ActiveLLMProfileID, &t.ParentRef, &t.PinnedAt, &t.CreatedAt, &t.CompletedAt, &t.TimeoutSeconds, &t.PlanHeartbeatSeconds, &t.PlanQuietMode, &t.CoverageEnabled, &t.LLMRotate, &t.FirstRunAt, &t.DeadlineAt, &t.TargetGate, &t.AutoApprove); err != nil {
+	if err := sc.Scan(&t.ID, &t.Name, &t.CategoryID, &t.CategoryName, &t.Description, &t.Goal, &t.ExplorationID, &t.Status, &t.Paused, &t.Queued, &t.QueuedAt, &t.QueueMode, &t.LLMProfileID, &t.ActiveLLMProfileID, &t.ParentRef, &t.PinnedAt, &t.CreatedAt, &t.CompletedAt, &t.TimeoutSeconds, &t.PlanHeartbeatSeconds, &t.PlanQuietMode, &t.CoverageEnabled, &t.LLMRotate, &t.FirstRunAt, &t.DeadlineAt, &t.TargetGate, &t.AutoApprove, &t.Owner, &t.GroupID); err != nil {
 		return nil, err
 	}
 	t.Pinned = t.PinnedAt != nil

@@ -282,6 +282,11 @@ func (s *Server) controlTasksBatch(w http.ResponseWriter, r *http.Request) {
 			items = append(items, item)
 			continue
 		}
+		if s.deniesTask(r, t) {
+			item.Error = "no access"
+			items = append(items, item)
+			continue
+		}
 		result, err := s.applyTaskControl(t, req.Action)
 		if err != nil {
 			item.Error = err.Error()

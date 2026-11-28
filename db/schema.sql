@@ -592,6 +592,23 @@ ALTER TABLE tasks ADD COLUMN IF NOT EXISTS queued BOOLEAN NOT NULL DEFAULT false
 -- and open add_task_scope/list_untested_assets to the agent; false=all off (see task_scope.go).
 -- Existing tasks default to true to keep prior behavior; company associations (task_scope kind=company) are unaffected by this switch.
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS coverage_enabled BOOLEAN NOT NULL DEFAULT true;
+-- Task access control (see 0018_task_access.sql): per-task owner + task groups.
+-- A 'user' role sees only tasks it owns or in a group it belongs to; 'admin' all.
+CREATE TABLE IF NOT EXISTS task_groups (
+    id         BIGSERIAL PRIMARY KEY,
+    name       TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS task_groups_name_key ON task_groups (lower(name));
+CREATE TABLE IF NOT EXISTS task_group_members (
+    group_id BIGINT NOT NULL REFERENCES task_groups(id) ON DELETE CASCADE,
+    username TEXT   NOT NULL,
+    PRIMARY KEY (group_id, username)
+);
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS owner TEXT NOT NULL DEFAULT '';
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS group_id BIGINT REFERENCES task_groups(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS tasks_owner_idx ON tasks (owner);
+CREATE INDEX IF NOT EXISTS tasks_group_idx ON tasks (group_id);
 -- queued_at makes admission FIFO reflect the actual enqueue order rather than the
 -- task creation order. queue_mode distinguishes first bootstrap from resuming an
 -- exploration that already owns goals/history.
