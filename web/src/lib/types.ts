@@ -1924,3 +1924,33 @@ export interface ChatBridge {
   status: ChatBridgeStatus;
   updated_at?: string;
 }
+
+// ---- Mobile APK static scan (POST /api/mobile/scan) ----
+
+export type ApkSeverity = "high" | "medium" | "low" | "info";
+
+export interface ApkFinding {
+  id: string;
+  title: string;
+  severity: ApkSeverity;
+  cwe: string;
+  masvs: string;
+  evidence: string;
+  file: string;
+  line: number;
+}
+
+export interface ApkScanReport {
+  app: {
+    package?: string;
+    version_name?: string;
+    version_code?: string;
+    min_sdk?: number;
+    target_sdk?: number;
+  };
+  findings: ApkFinding[];
+  endpoints: string[];
+  certificates: string[];
+  meta: { tools: Record<string, boolean>; truncated: boolean };
+  summary: { findings: number; endpoints: number; by_severity: Record<string, number> };
+}
