@@ -984,6 +984,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/chat/mentions", s.searchChatMentions)
 	mux.HandleFunc("POST /api/chat", s.chat)
 	mux.HandleFunc("POST /api/chat/upload", s.chatUpload) // upload method 1: files land in uploads/ under the conversation/task work dir
+	mux.HandleFunc("POST /api/mobile/scan", s.mobileScan) // direct static APK scan (upload .apk → JSON report); operator work
 	mux.HandleFunc("GET /api/tasks/{id}/chat/status", s.taskChatStatus)
 	mux.HandleFunc("POST /api/tasks/{id}/chat/stop", s.stopChat)
 
