@@ -61,6 +61,7 @@ type Server struct {
 	isolation IsolationStatus // result of the startup isolation self-test (isolation.go); zero when not run
 
 	chatBridges *chatBridgeRunner // inbound chat bridges (issue #5); nil without PostgreSQL
+	mobileNode  *mobileNodeHub    // remote mobile (emulator) node adb tunnel; always set
 
 	setupMu    sync.Mutex
 	setupToken string // one-time token POST /api/auth/init requires; empty when none is active
@@ -211,7 +212,8 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		profChatAgents: map[int64]*agent.ChatAgent{},
 		provByProfile:  map[int64]*provEntry{},
 		taskAgents:     map[string]*taskAgentBundle{}, archiveWake: make(chan struct{}, 1),
-		loginLimit: newLoginLimiter(time.Now), pwdLimit: newLoginLimiter(time.Now)}
+		loginLimit: newLoginLimiter(time.Now), pwdLimit: newLoginLimiter(time.Now),
+		mobileNode: &mobileNodeHub{}}
 	s.llmHealth, s.llmHealthSync = newLLMHealthRegistry(ctx, m.pg)
 	for _, o := range opts {
 		o(s)
@@ -803,6 +805,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/users/{id}", s.deleteUser)
 
 	mux.HandleFunc("GET /api/health", s.health)
+	// Mobile node: the emulator node's WebSocket dial-in (authenticated by the
+	// node token, not a user JWT — requireAuth exempts this path). The status and
+	// token-generation routes are admin-only (see adminPatterns).
+	mux.HandleFunc("GET /api/mobile-node/connect", s.mobileNodeConnect)
+	mux.HandleFunc("GET /api/mobile-node", s.mobileNodeStatus)
+	mux.HandleFunc("POST /api/mobile-node/token", s.mobileNodeGenToken)
 	mux.HandleFunc("GET /api/ready", s.ready)
 	mux.HandleFunc("GET /api/stats", s.stats)
 	mux.HandleFunc("GET /api/logs", s.getLogs)

@@ -153,6 +153,11 @@ var adminPatterns = map[string]bool{
 	// the connection. GET /api/chat-bridges is a config read and stays open.
 	"PUT /api/chat-bridges/{kind}":       true,
 	"POST /api/chat-bridges/{kind}/test": true,
+	// Mobile node: status read and node-token generation are admin-only. The
+	// node's own WebSocket dial-in (GET /api/mobile-node/connect) authenticates
+	// with the node token and is intentionally absent here.
+	"GET /api/mobile-node":        true,
+	"POST /api/mobile-node/token": true,
 	// LLM provider configuration (System > LLM). /api/llm/records* is the operator
 	// "LLM Recording" page and is intentionally absent.
 	"POST /api/llm":                 true,

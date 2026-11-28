@@ -396,7 +396,7 @@ func hostWithPort(host, scheme string) string {
 func (s *Server) requireAuth(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
-		if strings.HasPrefix(p, "/api/auth/") || p == "/api/health" || p == "/api/ready" {
+		if strings.HasPrefix(p, "/api/auth/") || p == "/api/health" || p == "/api/ready" || p == "/api/mobile-node/connect" {
 			h.ServeHTTP(w, r)
 			return
 		}

@@ -103,6 +103,9 @@ func TestUserRoleGatesConfigNotOperator(t *testing.T) {
 		// saving and testing a bridge is admin-only.
 		{"PUT", "/api/chat-bridges/telegram", `{"enabled":false}`},
 		{"POST", "/api/chat-bridges/telegram/test", ""},
+		// Mobile node: status read and node-token generation are admin-only.
+		{"GET", "/api/mobile-node", ""},
+		{"POST", "/api/mobile-node/token", ""},
 	} {
 		if code, _ := g.doAs(t, tok, c.method, c.path, c.body); code != 403 {
 			t.Fatalf("%s %s as user = %d, want 403", c.method, c.path, code)
