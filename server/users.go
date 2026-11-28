@@ -149,6 +149,10 @@ var adminPatterns = map[string]bool{
 	"PUT /api/settings":                  true,
 	"POST /api/settings/python/detect":   true,
 	"POST /api/settings/web-search/test": true,
+	// Chat bot (System > Chat bot): saving the bot token/allowlist and testing
+	// the connection. GET /api/chat-bridges is a config read and stays open.
+	"PUT /api/chat-bridges/{kind}":       true,
+	"POST /api/chat-bridges/{kind}/test": true,
 	// LLM provider configuration (System > LLM). /api/llm/records* is the operator
 	// "LLM Recording" page and is intentionally absent.
 	"POST /api/llm":                 true,

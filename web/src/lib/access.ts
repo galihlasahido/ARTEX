@@ -19,6 +19,7 @@ const ADMIN_ONLY_PREFIXES = [
   "/system/skills",
   "/system/tools",
   "/system/notify",
+  "/system/chat-bridge", // Telegram bot: token + allowlist are operator credentials
   "/system/intercept", // global rules + asset interception
   "/system/logs",
   "/system/settings",

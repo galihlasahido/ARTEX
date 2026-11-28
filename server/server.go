@@ -27,6 +27,7 @@ import (
 
 	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/archivestore"
+	"github.com/Autumn-27/artex/chatbridge"
 	"github.com/Autumn-27/artex/db"
 	"github.com/Autumn-27/artex/egress"
 	"github.com/Autumn-27/artex/intercept"
@@ -304,6 +305,11 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		// Inbound chat bridges: an operator drives ARTEX from a chat app. Off until a bridge is enabled,
 		// and only allowlisted chats are served; long polling only, so no inbound port is opened.
 		s.chatBridges = newChatBridgeRunner(m.pg)
+		// Task and approval commands for allowlisted operators, appended to the
+		// built-in whoami/help table so later upstream merges stay clean.
+		s.chatBridges.commands = func(kind string) []chatbridge.Command {
+			return append(defaultChatBridgeCommands(kind), chatConsoleCommands(s)...)
+		}
 		go s.chatBridges.Run(s.ctx)
 		logSink.SetDB(ctx, m.pg) // restore last 100 log rows and enable async persistence
 	}
