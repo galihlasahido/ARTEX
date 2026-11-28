@@ -158,6 +158,12 @@ var adminPatterns = map[string]bool{
 	// with the node token and is intentionally absent here.
 	"GET /api/mobile-node":        true,
 	"POST /api/mobile-node/token": true,
+	// Task groups: creating groups and setting membership is admin-only. The
+	// list read (GET /api/task-groups) and placing a task in a group
+	// (PUT /api/tasks/{id}/group) are operator work and intentionally absent.
+	"POST /api/task-groups":             true,
+	"PUT /api/task-groups/{id}/members": true,
+	"DELETE /api/task-groups/{id}":      true,
 	// LLM provider configuration (System > LLM). /api/llm/records* is the operator
 	// "LLM Recording" page and is intentionally absent.
 	"POST /api/llm":                 true,

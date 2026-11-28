@@ -877,6 +877,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/tasks/{id}/constraints/{cid}", s.editConstraint)    // constraint management: edit a constraint
 	mux.HandleFunc("DELETE /api/tasks/{id}/constraints/{cid}", s.deleteConstraint) // constraint management: delete a constraint
 	mux.HandleFunc("POST /api/tasks/{id}/control", s.control)
+	mux.HandleFunc("PUT /api/tasks/{id}/group", s.setTaskGroup) // owner/admin: place the task in a group (taskGate-gated)
+	// Task groups (System > admin): management is admin-only; the list read is
+	// open so a user can see the groups it may place its tasks into.
+	mux.HandleFunc("GET /api/task-groups", s.listTaskGroups)
+	mux.HandleFunc("POST /api/task-groups", s.createTaskGroup)
+	mux.HandleFunc("PUT /api/task-groups/{id}/members", s.updateTaskGroupMembers)
+	mux.HandleFunc("DELETE /api/task-groups/{id}", s.deleteTaskGroup)
 	mux.HandleFunc("POST /api/tasks/{id}/retarget", s.retargetTaskHandler)
 	mux.HandleFunc("POST /api/tasks/{id}/extend", s.extendTaskHandler)
 	mux.HandleFunc("PUT /api/tasks/{id}/llm", s.updateTaskLLMProfiles)

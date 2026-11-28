@@ -28,14 +28,29 @@ func (s *Server) canAccessTask(p principal, t *Task) bool {
 	if t == nil {
 		return false
 	}
-	if t.Owner != "" && strings.EqualFold(t.Owner, p.username) {
+	if t.Owner != "" && strings.EqualFold(t.Owner, p.username) { // Owner is set once at creation
 		return true
 	}
-	if t.GroupID != nil {
-		member, _ := s.m.PG().IsTaskGroupMember(*t.GroupID, p.username)
+	if gid := t.groupID(); gid != nil {
+		member, _ := s.m.PG().IsTaskGroupMember(*gid, p.username)
 		return member
 	}
 	return false
+}
+
+// groupID returns the task's group under the lifecycle lock (it changes via
+// setTaskGroup).
+func (t *Task) groupID() *int64 {
+	t.lifecycleMu.RLock()
+	defer t.lifecycleMu.RUnlock()
+	return t.GroupID
+}
+
+// setGroupID updates the in-memory group after a persisted change.
+func (t *Task) setGroupID(gid *int64) {
+	t.lifecycleMu.Lock()
+	t.GroupID = gid
+	t.lifecycleMu.Unlock()
 }
 
 // taskGate refuses a non-admin caller access to a task it may not see, on every
