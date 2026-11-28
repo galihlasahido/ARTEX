@@ -14,7 +14,6 @@ import type {
   Agent,
   AgentDetail,
   AgentTrigger,
-  ApkScanReport,
   ArchiveBatchItem,
   Asset,
   AssetInterceptRule,
@@ -276,69 +275,6 @@ function interceptPageQuery(page: number, size: number, filter: InterceptApprova
   if (filter.decision_source) query.set("decision_source", filter.decision_source);
   if (filter.decided_by) query.set("decided_by", filter.decided_by);
   return query.toString();
-}
-
-// mockApkScan returns a sample report in NEXT_PUBLIC_MOCK dev mode.
-function mockApkScan(): ApkScanReport {
-  return {
-    app: { package: "com.example.demo", version_name: "1.0", min_sdk: 24, target_sdk: 34 },
-    findings: [
-      {
-        id: "manifest-debuggable",
-        title: "App is debuggable",
-        severity: "high",
-        cwe: "CWE-489",
-        masvs: "MASVS-RESILIENCE-2",
-        evidence: 'android:debuggable="true"',
-        file: "AndroidManifest.xml",
-        line: 0,
-      },
-      {
-        id: "secret-google-api",
-        title: "Hardcoded Google API key",
-        severity: "high",
-        cwe: "CWE-798",
-        masvs: "MASVS-STORAGE-1",
-        evidence: "AIza…******",
-        file: "res/values/strings.xml",
-        line: 0,
-      },
-      {
-        id: "crypto-ecb",
-        title: "AES/DES in ECB mode",
-        severity: "high",
-        cwe: "CWE-327",
-        masvs: "MASVS-CRYPTO-2",
-        evidence: 'Cipher.getInstance("AES/ECB/PKCS5Padding")',
-        file: "com/example/Crypto.java",
-        line: 42,
-      },
-      {
-        id: "manifest-allowbackup",
-        title: "App data backup allowed",
-        severity: "medium",
-        cwe: "CWE-530",
-        masvs: "MASVS-STORAGE-2",
-        evidence: 'android:allowBackup="true"',
-        file: "AndroidManifest.xml",
-        line: 0,
-      },
-      {
-        id: "perm-read_sms",
-        title: "Dangerous permission: android.permission.READ_SMS",
-        severity: "low",
-        cwe: "CWE-250",
-        masvs: "MASVS-PLATFORM-1",
-        evidence: "android.permission.READ_SMS",
-        file: "AndroidManifest.xml",
-        line: 0,
-      },
-    ],
-    endpoints: ["https://api.example.com/v1", "https://backend.example-bank.co.id/api"],
-    certificates: ["CN=Example, O=Example Corp"],
-    meta: { tools: { apktool: true, jadx: true, aapt: true, apksigner: true }, truncated: false },
-    summary: { findings: 5, endpoints: 2, by_severity: { high: 3, medium: 1, low: 1, info: 0 } },
-  };
 }
 
 export const api = {
@@ -1219,20 +1155,6 @@ export const api = {
     });
     if (!r.ok) throw new Error(t("Upload failed: {error}", { error: `${r.status} ${await r.text()}` }));
     return r.json() as Promise<{ attachments: ChatAttachment[] }>;
-  },
-  // Mobile APK static scan: upload an .apk, get the apkscan report back.
-  scanApk: async (file: File): Promise<ApkScanReport> => {
-    if (MOCK) return mockApkScan();
-    const fd = new FormData();
-    fd.append("file", file);
-    const token = getToken();
-    const r = await fetch(`/api/mobile/scan`, {
-      method: "POST",
-      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      body: fd,
-    });
-    if (!r.ok) throw new Error(`${r.status} ${(await r.text()) || ""}`.trim());
-    return r.json() as Promise<ApkScanReport>;
   },
   stopChat: (taskId: string) => post<{ status: string }>(`/tasks/${taskId}/chat/stop`, {}),
   gc: (ttl = 86400) => post<{ removed: number }>(`/gc?ttl=${ttl}`, {}),
