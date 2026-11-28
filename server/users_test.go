@@ -99,15 +99,21 @@ func TestUserRoleGatesConfigNotOperator(t *testing.T) {
 		{"PUT", "/api/settings", `{"auto_approve_default":true}`},
 		{"GET", "/api/logs", ""},
 		{"POST", "/api/intercept/rules", `{"pattern":"x"}`},
+		// Chat bot: the bot token and allowlist are an operator credential, so
+		// saving and testing a bridge is admin-only.
+		{"PUT", "/api/chat-bridges/telegram", `{"enabled":false}`},
+		{"POST", "/api/chat-bridges/telegram/test", ""},
 	} {
 		if code, _ := g.doAs(t, tok, c.method, c.path, c.body); code != 403 {
 			t.Fatalf("%s %s as user = %d, want 403", c.method, c.path, code)
 		}
 	}
 
-	// A config read stays open to the operator.
-	if code, _ := g.doAs(t, tok, "GET", "/api/settings", ""); code != 200 {
-		t.Fatalf("GET /api/settings as user = %d, want 200", code)
+	// A config read stays open to the operator (the token comes back masked).
+	for _, path := range []string{"/api/settings", "/api/chat-bridges"} {
+		if code, _ := g.doAs(t, tok, "GET", path, ""); code != 200 {
+			t.Fatalf("GET %s as user = %d, want 200", path, code)
+		}
 	}
 
 	// Operator work is allowed: creating a task, and reaching an approval

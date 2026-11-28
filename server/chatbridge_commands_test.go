@@ -70,7 +70,7 @@ func TestChatConsoleCommands(t *testing.T) {
 			{ID: 42, Task: "7", Agent: "worker", Tool: "Bash", Input: `{"command":"nmap"}`, Reason: "out of scope", Risk: "high (80)"},
 		},
 		pendingByID: map[int64]consolePending{
-			42: {ID: 42, Task: "7", Agent: "worker", Tool: "Bash", Input: `{"command":"nmap x"}`, Reason: "out of scope", Risk: "high (80)"},
+			42: {ID: 42, Task: "7", Agent: "worker", Tool: "Bash", Input: `{"command":"nmap x"}`, Reason: "out of scope", Risk: "high (80)", Targets: "mbanking.bankaceh.co.id:443 → 1.2.3.4"},
 		},
 	}
 	cmds := chatConsoleCommands(f)
@@ -109,6 +109,10 @@ func TestChatConsoleCommands(t *testing.T) {
 	if f.lastControlID != "7" || f.lastControlAction != "pause" {
 		t.Fatalf("control recorded id=%q action=%q", f.lastControlID, f.lastControlAction)
 	}
+	// A copied-back "#7" must resolve to task 7.
+	if got := runCmd(t, cmds, "pause", chatbridge.Request{Args: "#7"}); !strings.Contains(got, "Task 7 paused") || f.lastControlID != "7" {
+		t.Fatalf("/pause #7 = %q (id=%q)", got, f.lastControlID)
+	}
 	f.controlErr = errString("task is being deleted")
 	if got := runCmd(t, cmds, "resume", chatbridge.Request{Args: "7"}); !strings.Contains(got, "Could not resume task 7") ||
 		!strings.Contains(got, "being deleted") {
@@ -121,9 +125,10 @@ func TestChatConsoleCommands(t *testing.T) {
 		!strings.Contains(got, "Bash") || !strings.Contains(got, "risk:high (80)") {
 		t.Fatalf("/approvals = %q", got)
 	}
-	if got := runCmd(t, cmds, "approval", chatbridge.Request{Args: "42"}); !strings.Contains(got, "Approval #42") ||
-		!strings.Contains(got, "nmap x") || !strings.Contains(got, "out of scope") {
-		t.Fatalf("/approval 42 = %q", got)
+	if got := runCmd(t, cmds, "approval", chatbridge.Request{Args: "#42"}); !strings.Contains(got, "Approval #42") ||
+		!strings.Contains(got, "nmap x") || !strings.Contains(got, "out of scope") ||
+		!strings.Contains(got, "mbanking.bankaceh.co.id:443 → 1.2.3.4") {
+		t.Fatalf("/approval #42 = %q", got)
 	}
 
 	// Decide: approver is built from the chat user id, username as a label.

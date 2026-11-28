@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -23,8 +24,13 @@ import (
 // (a tool's argv, a finding's reason) can never inject markup or a link; the
 // list commands still cap their own length so a long queue is paged, not cut.
 
-// chatConsoleListCap bounds how many rows /tasks and /approvals print.
-const chatConsoleListCap = 30
+// Row caps keep a list reply well under the transport's ~4096-char limit so a
+// long queue is paged ("…and N more"), not silently cut mid-row. Approval rows
+// are two lines, so their cap is lower.
+const (
+	chatConsoleTaskCap    = 25
+	chatConsolePendingCap = 12
+)
 
 // consoleTask is one task as the chat console shows it.
 type consoleTask struct {
@@ -39,13 +45,14 @@ type consoleTask struct {
 
 // consolePending is one pending approval request as the chat console shows it.
 type consolePending struct {
-	ID     int64
-	Task   string
-	Agent  string
-	Tool   string
-	Input  string
-	Reason string
-	Risk   string
+	ID      int64
+	Task    string
+	Agent   string
+	Tool    string
+	Input   string
+	Reason  string
+	Risk    string
+	Targets string // target-gate addresses + resolved IPs; shown in detail only
 }
 
 // chatConsole is everything the command table needs from the server. The real
@@ -75,7 +82,7 @@ func chatConsoleCommands(c chatConsole) []chatbridge.Command {
 			Usage:   "<id>",
 			Summary: "show one task's detail",
 			Run: func(_ context.Context, req chatbridge.Request) string {
-				id := strings.TrimSpace(req.Args)
+				id := trimID(req.Args)
 				if id == "" {
 					return "Usage: /task <id> — see /tasks for ids."
 				}
@@ -145,7 +152,7 @@ func chatConsoleCommands(c chatConsole) []chatbridge.Command {
 
 func taskControlCmd(c chatConsole, action string) chatbridge.CommandFunc {
 	return func(_ context.Context, req chatbridge.Request) string {
-		id := strings.TrimSpace(req.Args)
+		id := trimID(req.Args)
 		if id == "" {
 			return "Usage: /" + action + " <id> — see /tasks for ids."
 		}
@@ -186,8 +193,14 @@ func consoleApprover(req chatbridge.Request) string {
 	return who
 }
 
+// trimID normalizes an id argument: the lists print "#7" and "#42", so a user
+// who copies one back ("/pause #7") must still work.
+func trimID(s string) string {
+	return strings.TrimPrefix(strings.TrimSpace(s), "#")
+}
+
 func parseConsoleID(s string) (int64, bool) {
-	id, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+	id, err := strconv.ParseInt(trimID(s), 10, 64)
 	if err != nil || id <= 0 {
 		return 0, false
 	}
@@ -201,9 +214,9 @@ func formatTaskList(tasks []consoleTask) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Tasks (%d):\n", len(tasks))
 	shown, more := tasks, 0
-	if len(shown) > chatConsoleListCap {
-		more = len(shown) - chatConsoleListCap
-		shown = shown[:chatConsoleListCap]
+	if len(shown) > chatConsoleTaskCap {
+		more = len(shown) - chatConsoleTaskCap
+		shown = shown[:chatConsoleTaskCap]
 	}
 	for _, t := range shown {
 		marker := "·"
@@ -256,9 +269,9 @@ func formatPendingList(items []consolePending) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Pending approvals (%d):\n", len(items))
 	shown, more := items, 0
-	if len(shown) > chatConsoleListCap {
-		more = len(shown) - chatConsoleListCap
-		shown = shown[:chatConsoleListCap]
+	if len(shown) > chatConsolePendingCap {
+		more = len(shown) - chatConsolePendingCap
+		shown = shown[:chatConsolePendingCap]
 	}
 	for _, it := range shown {
 		fmt.Fprintf(&b, "#%d  [%s]  %s  risk:%s\n", it.ID, it.Task, clip(it.Tool, 40), it.Risk)
@@ -285,11 +298,34 @@ func formatPendingDetail(it consolePending) string {
 	if it.Reason != "" {
 		fmt.Fprintf(&b, "Reason: %s\n", clip(it.Reason, 300))
 	}
+	if it.Targets != "" {
+		fmt.Fprintf(&b, "Targets (pinned on approve): %s\n", it.Targets)
+	}
 	if strings.TrimSpace(it.Input) != "" {
 		fmt.Fprintf(&b, "Input: %s\n", clip(it.Input, 1000))
 	}
 	fmt.Fprintf(&b, "\nReply /approve %d or /deny %d.", it.ID, it.ID)
 	return b.String()
+}
+
+// formatTargets summarizes a target-gate request's addresses. Allowing one pins
+// the resolved IPs, so the operator sees "host:port → resolved ips" per target.
+func formatTargets(targets []db.InterceptTarget) string {
+	if len(targets) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(targets))
+	for _, t := range targets {
+		host := t.Host
+		if t.Port > 0 {
+			host = fmt.Sprintf("%s:%d", t.Host, t.Port)
+		}
+		if len(t.ResolvedIPs) > 0 {
+			host += " → " + strings.Join(t.ResolvedIPs, ", ")
+		}
+		parts = append(parts, host)
+	}
+	return clip(strings.Join(parts, "; "), 400)
 }
 
 // clip shortens s to at most n runes, appending an ellipsis when it cut.
@@ -401,7 +437,20 @@ func (s *Server) consoleGetPending(id int64) (consolePending, bool, error) {
 	if p == nil {
 		return consolePending{}, false, nil
 	}
-	return consolePendingFrom(*p), true, nil
+	item := consolePendingFrom(*p)
+	// A target-gate request carries the resolved addresses in audit.targets;
+	// surface them so an approve is not blind. Best-effort: a read error leaves
+	// the rest of the detail intact.
+	if p.DecisionSource == "target" {
+		var raw json.RawMessage
+		if qErr := pg.QueryRow(`SELECT COALESCE(audit->'targets','[]') FROM intercept_pending WHERE id=$1`, id).Scan(&raw); qErr == nil {
+			var targets []db.InterceptTarget
+			if json.Unmarshal(raw, &targets) == nil {
+				item.Targets = formatTargets(targets)
+			}
+		}
+	}
+	return item, true, nil
 }
 
 func (s *Server) consoleDecide(id int64, allow bool, approver string) error {
