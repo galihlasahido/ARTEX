@@ -100,6 +100,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { Label } from "@/components/ui/label";
+import { NativeSelect } from "@/components/ui/native-select";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -137,6 +138,7 @@ import type {
   TaskArchiveState,
   TaskCategory,
   TaskCredentialInput,
+  TaskGroup,
   TaskStatus,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -3243,6 +3245,8 @@ function CreateTaskSheet({
   const [uploading, setUploading] = React.useState(false);
   const [uploadCount, setUploadCount] = React.useState(0);
   const [isApkTemplate, setIsApkTemplate] = React.useState(false); // mobile APK template applied → hint to attach an .apk
+  const [taskGroups, setTaskGroups] = React.useState<TaskGroup[]>([]); // groups the caller may place this task in
+  const [selectedGroupID, setSelectedGroupID] = React.useState<number | null>(null);
   const draftIdRef = React.useRef<string>("");
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const sheetContentRef = React.useRef<HTMLDivElement>(null);
@@ -3257,6 +3261,10 @@ function CreateTaskSheet({
       .companies()
       .then(setCompanies)
       .catch(() => setCompanies([]));
+    api
+      .listTaskGroups()
+      .then((r) => setTaskGroups(r.groups ?? []))
+      .catch(() => setTaskGroups([]));
   }, []);
 
   // pickFiles uploads the chosen files into this draft's staging dir and appends their
@@ -3294,7 +3302,7 @@ function CreateTaskSheet({
     try {
       const timeoutSec = Math.max(0, Math.floor(Number(timeoutMin) || 0)) * 60;
       const heartbeatSec = Math.max(10, Math.floor(Number(heartbeatMin) || 10)) * 60; // minimum 10min, matching the backend's normalization
-      await api.createTask({
+      const created = await api.createTask({
         name: name.trim(),
         categoryId: categoryID,
         description: description.trim(),
@@ -3319,8 +3327,17 @@ function CreateTaskSheet({
           }))
           .filter((c) => c.domain !== "" && c.username !== ""),
       });
+      // Place the new task in the selected group (best-effort; the task is already created).
+      if (selectedGroupID != null && created?.id) {
+        try {
+          await api.setTaskGroup(created.id, selectedGroupID);
+        } catch {
+          toast.error(t("Task created, but could not set its group."));
+        }
+      }
       toast.success(t("Task created"));
       setName("");
+      setSelectedGroupID(null);
       setCategoryID(undefined);
       setDescription("");
       setGoal("");
@@ -3410,6 +3427,25 @@ function CreateTaskSheet({
                 )}
               </FieldDescription>
             </Field>
+            {taskGroups.length > 0 && (
+              <div className="grid gap-2">
+                <Label htmlFor="task-group">{t("Task group (optional)")}</Label>
+                <NativeSelect
+                  id="task-group"
+                  value={selectedGroupID ?? ""}
+                  onChange={(e) => setSelectedGroupID(e.target.value ? Number(e.target.value) : null)}
+                  className="max-w-xs"
+                >
+                  <option value="">{t("None")}</option>
+                  {taskGroups.map((group) => (
+                    <option key={group.id} value={group.id}>
+                      {group.name}
+                    </option>
+                  ))}
+                </NativeSelect>
+                <p className="text-muted-foreground text-xs">{t("Members of this group can access the task.")}</p>
+              </div>
+            )}
             <div className="grid gap-2">
               <Label htmlFor="description">{t("Description")}</Label>
               <Textarea

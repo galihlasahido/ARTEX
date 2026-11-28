@@ -2834,5 +2834,8 @@
   "Skip TLS certificate verification": "Lewati verifikasi sertifikat TLS",
   "Task Groups": "Task Group",
   "Use StartTLS (over ldap://)": "Pakai StartTLS (lewat ldap://)",
-  "User DN pattern": "Pola DN User"
+  "User DN pattern": "Pola DN User",
+  "Members of this group can access the task.": "Anggota grup ini bisa mengakses task tersebut.",
+  "Task created, but could not set its group.": "Task dibuat, tapi grupnya gagal diset.",
+  "Task group (optional)": "Task group (opsional)"
 }

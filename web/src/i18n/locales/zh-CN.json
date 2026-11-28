@@ -2834,5 +2834,8 @@
   "Skip TLS certificate verification": "跳过 TLS 证书验证",
   "Task Groups": "任务组",
   "Use StartTLS (over ldap://)": "使用 StartTLS（通过 ldap://）",
-  "User DN pattern": "用户 DN 模板"
+  "User DN pattern": "用户 DN 模板",
+  "Members of this group can access the task.": "该组的成员可以访问此任务。",
+  "Task created, but could not set its group.": "任务已创建，但无法设置其分组。",
+  "Task group (optional)": "任务组（可选）"
 }
