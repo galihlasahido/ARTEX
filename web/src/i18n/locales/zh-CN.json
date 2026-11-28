@@ -2815,5 +2815,7 @@
   "Finding": "发现",
   "Reference": "参考",
   "Location": "位置",
-  "Certificate": "证书"
+  "Certificate": "证书",
+  "Upload APK": "上传 APK",
+  "Attach the .apk to test — its path is added to the description for the agent to scan.": "附加要测试的 .apk — 其路径会添加到描述中供智能体扫描。"
 }

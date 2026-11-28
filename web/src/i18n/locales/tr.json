@@ -2815,5 +2815,7 @@
   "Finding": "Temuan",
   "Reference": "Referensi",
   "Location": "Lokasi",
-  "Certificate": "Sertifikat"
+  "Certificate": "Sertifikat",
+  "Upload APK": "Unggah APK",
+  "Attach the .apk to test — its path is added to the description for the agent to scan.": "Lampirkan .apk yang ingin diuji — path-nya ditambahkan ke deskripsi agar di-scan agent."
 }
