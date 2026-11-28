@@ -252,6 +252,29 @@ RUN set -eux; \
     ! grep -qE "Installing|ERRR|CRITICAL" /tmp/bbot-dry.log || { cat /tmp/bbot-dry.log; exit 1; }
 
 
+# Mobile APK assessment tools (skills/mobile-apk) — ARTEX-native static analysis
+# (inspired by MobSF, no MobSF). apktool/aapt/apksigner/adb come from Debian; the
+# APK is only unpacked and read, never executed in the container. jadx decompiles
+# DEX to Java for the pattern pass and is fetched from its pinned GitHub release
+# (arch-independent Java, so one checksum for amd64 and arm64), verified against
+# the digest below rather than a fetched checksum file (same policy as the tools
+# stage). The dynamic instrumentation stack (frida-tools, objection) is added with
+# the emulator connector in phase 2; it targets an EXTERNAL rooted emulator.
+ARG JADX_VERSION=1.5.0
+ARG JADX_SHA256=c5a713fa4800cbb9e6df85ced1bef95ba329040c95cb87d54465f108483e4ef9
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      default-jre-headless apktool aapt apksigner adb; \
+    rm -rf /var/lib/apt/lists/*; \
+    curl -fsSL "https://github.com/skylot/jadx/releases/download/v${JADX_VERSION}/jadx-${JADX_VERSION}.zip" -o /tmp/jadx.zip; \
+    got="$(sha256sum /tmp/jadx.zip | cut -d' ' -f1)"; \
+    if [ "$JADX_SHA256" != "$got" ]; then echo "jadx checksum mismatch: want $JADX_SHA256 got $got" >&2; exit 1; fi; \
+    mkdir -p /opt/jadx; unzip -q /tmp/jadx.zip -d /opt/jadx; rm -f /tmp/jadx.zip; \
+    ln -s /opt/jadx/bin/jadx /usr/local/bin/jadx; \
+    apktool --version; aapt version; apksigner --version; adb --version; jadx --version
+
+
 # Preinstall Playwright MCP and CLI (globally) so no network download is needed at runtime.
 # @playwright/mcp: the seeded browser MCP runs the playwright-mcp binary directly.
 # `npx @playwright/mcp` is not used: it queries the npm registry on every start even

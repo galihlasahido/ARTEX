@@ -179,12 +179,21 @@ def decompile_jadx(apk, workdir):
     return out if os.path.isdir(out) else None
 
 
+def _aapt():
+    """aapt2 if present, else aapt (both support `dump badging`)."""
+    for t in ("aapt2", "aapt"):
+        if have(t):
+            return t
+    return None
+
+
 def badging(apk):
-    """package / version / sdk from aapt2."""
+    """package / version / sdk from aapt2 or aapt."""
     info = {}
-    if not have("aapt2"):
+    tool = _aapt()
+    if not tool:
         return info
-    code, so, _ = run(["aapt2", "dump", "badging", apk])
+    code, so, _ = run([tool, "dump", "badging", apk])
     if code != 0:
         return info
     m = re.search(r"package: name='([^']+)' versionCode='([^']*)' versionName='([^']*)'", so)
@@ -296,7 +305,7 @@ def walk_scan(root, exts, max_files=20000):
 # --- orchestration ----------------------------------------------------------
 
 def analyze(apk, workdir):
-    tools = {t: have(t) for t in ("apktool", "jadx", "aapt2", "apksigner")}
+    tools = {t: have(t) for t in ("apktool", "jadx", "aapt2", "aapt", "apksigner")}
     report = {"app": {}, "findings": [], "endpoints": [], "certificates": [],
               "meta": {"tools": tools, "truncated": False}}
 
