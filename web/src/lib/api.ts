@@ -59,6 +59,7 @@ import type {
   InterceptRule,
   JudgeConfig,
   JudgeUsage,
+  LDAPConfig,
   LLMPoolStatus,
   LLMProfile,
   LLMRecordDetail,
@@ -101,6 +102,7 @@ import type {
   TaskCredential,
   TaskCredentialInput,
   TaskGoal,
+  TaskGroup,
   TaskLLMResolutions,
   TaskNode,
   TaskScopeRow,
@@ -389,7 +391,13 @@ export const api = {
   controlTask: (id: string, action: "pause" | "resume") =>
     post<{ id: string; paused: boolean; queued: boolean; status: string }>(`/tasks/${id}/control`, { action }),
   extendTask: (id: string, seconds: number) =>
-    post<{ id: string; added_seconds: number; timeout_seconds: number; deadline_at: number; remaining_seconds: number }>(`/tasks/${id}/extend`, { seconds }),
+    post<{
+      id: string;
+      added_seconds: number;
+      timeout_seconds: number;
+      deadline_at: number;
+      remaining_seconds: number;
+    }>(`/tasks/${id}/extend`, { seconds }),
   controlTasksBatch: (taskIds: string[], action: "pause" | "resume") =>
     post<{ items: BatchControlItem[] }>("/tasks/control/batch", { task_ids: taskIds, action }),
   taskArchives: (input?: { page?: number; size?: number; q?: string; state?: string }) => {
@@ -1164,6 +1172,19 @@ export const api = {
     return r.json() as Promise<{ attachments: ChatAttachment[] }>;
   },
   stopChat: (taskId: string) => post<{ status: string }>(`/tasks/${taskId}/chat/stop`, {}),
+
+  // ---- Task groups ----
+  listTaskGroups: () => get<{ groups: TaskGroup[] }>("/task-groups"),
+  createTaskGroup: (name: string) => post<TaskGroup>("/task-groups", { name }),
+  setTaskGroupMembers: (id: number, members: string[]) =>
+    put<{ ok: boolean }>(`/task-groups/${id}/members`, { members }),
+  deleteTaskGroup: (id: number) => del<{ ok: boolean }>(`/task-groups/${id}`),
+  setTaskGroup: (taskId: string, groupId: number | null) =>
+    put<{ ok: boolean }>(`/tasks/${taskId}/group`, { group_id: groupId }),
+
+  // ---- LDAP config (admin) ----
+  getLDAP: () => get<LDAPConfig>("/ldap"),
+  setLDAP: (cfg: LDAPConfig) => put<LDAPConfig>("/ldap", cfg),
   gc: (ttl = 86400) => post<{ removed: number }>(`/gc?ttl=${ttl}`, {}),
 
   // ---- LLM ----

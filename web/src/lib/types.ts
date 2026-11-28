@@ -1925,3 +1925,23 @@ export interface ChatBridge {
   status: ChatBridgeStatus;
   updated_at?: string;
 }
+
+// ---- Task groups (share tasks with assigned members) ----
+
+export interface TaskGroup {
+  id: number;
+  name: string;
+  created_at: string;
+  members?: string[];
+}
+
+// ---- LDAP direct-bind login config (admin) ----
+
+export interface LDAPConfig {
+  enabled: boolean;
+  url: string;
+  user_dn_pattern: string;
+  start_tls: boolean;
+  insecure_tls: boolean;
+  default_role: "user" | "admin";
+}

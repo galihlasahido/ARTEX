@@ -24,6 +24,8 @@ const ADMIN_ONLY_PREFIXES = [
   "/system/logs",
   "/system/settings",
   "/system/users",
+  "/system/task-groups",
+  "/system/ldap",
 ];
 
 // Admin-prefixed paths that a "user" may still open. The approval queue lives
